@@ -9,3 +9,5 @@ It has the final goal to run on the web with [teaVM](https://teavm.org/)
 # Original MARS
 
 If you are looking for the original MARS, you can find it [here](https://dpetersanderson.github.io/)
+
+If you are looking for the mips docs, you can find it [here](https://dpetersanderson.github.io/Help/MarsHelpIntro.html)
