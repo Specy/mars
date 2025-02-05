@@ -1,6 +1,7 @@
 package mars.mips.hardware;
 
 import mars.*;
+import mars.config.SettingsProperties;
 import mars.util.*;
 import mars.simulator.*;
 import mars.mips.instructions.*;
@@ -442,7 +443,7 @@ public class Memory extends Observable {
          // Burch Mod (Jan 2013): replace throw with call to setStatement
          // DPS adaptation 5-Jul-2013: either throw or call, depending on setting
 
-         if (Globals.getSettings().getBooleanSetting(Settings.SELF_MODIFYING_CODE_ENABLED)) {
+         if (Globals.getSettingsProperties().getBooleanValue(SettingsProperties.SelfModifyingCode)) {
             ProgramStatement oldStatement = getStatementNoNotify(address);
             if (oldStatement != null) {
                oldValue = oldStatement.getBinaryStatement();
@@ -507,7 +508,7 @@ public class Memory extends Observable {
       } else if (inTextSegment(address)) {
          // Burch Mod (Jan 2013): replace throw with call to setStatement
          // DPS adaptation 5-Jul-2013: either throw or call, depending on setting
-         if (Globals.getSettings().getBooleanSetting(Settings.SELF_MODIFYING_CODE_ENABLED)) {
+         if (Globals.getSettingsProperties().getBooleanValue(SettingsProperties.SelfModifyingCode)) {
             ProgramStatement oldStatement = getStatementNoNotify(address);
             if (oldStatement != null) {
                oldValue = oldStatement.getBinaryStatement();
@@ -537,7 +538,7 @@ public class Memory extends Observable {
                Exceptions.ADDRESS_EXCEPTION_STORE, address);
       }
       notifyAnyObservers(AccessNotice.WRITE, address, WORD_LENGTH_BYTES, value);
-      if (Globals.getSettings().getBackSteppingEnabled()) {
+      if (Globals.getSettingsProperties().getBackSteppingEnabled()) {
          Globals.program.getBackStepper().addMemoryRestoreRawWord(address, oldValue);
       }
       return oldValue;
@@ -560,7 +561,7 @@ public class Memory extends Observable {
                "store address not aligned on word boundary ",
                Exceptions.ADDRESS_EXCEPTION_STORE, address);
       }
-      return (Globals.getSettings().getBackSteppingEnabled())
+      return (Globals.getSettingsProperties().getBackSteppingEnabled())
             ? Globals.program.getBackStepper().addMemoryRestoreWord(address, set(address, value, WORD_LENGTH_BYTES))
             : set(address, value, WORD_LENGTH_BYTES);
    }
@@ -582,7 +583,7 @@ public class Memory extends Observable {
          throw new AddressErrorException("store address not aligned on halfword boundary ",
                Exceptions.ADDRESS_EXCEPTION_STORE, address);
       }
-      return (Globals.getSettings().getBackSteppingEnabled())
+      return (Globals.getSettingsProperties().getBackSteppingEnabled())
             ? Globals.program.getBackStepper().addMemoryRestoreHalf(address, set(address, value, 2))
             : set(address, value, 2);
    }
@@ -598,7 +599,7 @@ public class Memory extends Observable {
     **/
 
    public int setByte(int address, int value) throws AddressErrorException {
-      return (Globals.getSettings().getBackSteppingEnabled())
+      return (Globals.getSettingsProperties().getBackSteppingEnabled())
             ? Globals.program.getBackStepper().addMemoryRestoreByte(address, set(address, value, 1))
             : set(address, value, 1);
    }
@@ -693,7 +694,7 @@ public class Memory extends Observable {
          // Burch Mod (Jan 2013): replace throw with calls to getStatementNoNotify &
          // getBinaryStatement
          // DPS adaptation 5-Jul-2013: either throw or call, depending on setting
-         if (Globals.getSettings().getBooleanSetting(Settings.SELF_MODIFYING_CODE_ENABLED)) {
+         if (Globals.getSettingsProperties().getBooleanValue(SettingsProperties.SelfModifyingCode)) {
             ProgramStatement stmt = getStatementNoNotify(address);
             value = stmt == null ? 0 : stmt.getBinaryStatement();
          } else {
@@ -760,7 +761,7 @@ public class Memory extends Observable {
          // Burch Mod (Jan 2013): replace throw with calls to getStatementNoNotify &
          // getBinaryStatement
          // DPS adaptation 5-Jul-2013: either throw or call, depending on setting
-         if (Globals.getSettings().getBooleanSetting(Settings.SELF_MODIFYING_CODE_ENABLED)) {
+         if (Globals.getSettingsProperties().getBooleanValue(SettingsProperties.SelfModifyingCode)) {
             ProgramStatement stmt = getStatementNoNotify(address);
             value = stmt == null ? 0 : stmt.getBinaryStatement();
          } else {
@@ -1011,7 +1012,7 @@ public class Memory extends Observable {
                "fetch address for text segment not aligned to word boundary ",
                Exceptions.ADDRESS_EXCEPTION_LOAD, address);
       }
-      if (!Globals.getSettings().getBooleanSetting(Settings.SELF_MODIFYING_CODE_ENABLED)
+      if (!Globals.getSettingsProperties().getBooleanValue(SettingsProperties.SelfModifyingCode)
             && !(inTextSegment(address) || inKernelTextSegment(address))) {
          throw new AddressErrorException(
                "fetch address for text segment out of range ",

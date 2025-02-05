@@ -98,7 +98,7 @@ public class RegisterFile {
       } else {
          for (int i = 0; i < regFile.length; i++) {
             if (regFile[i].getNumber() == num) {
-               old = (Globals.getSettings().getBackSteppingEnabled())
+               old = (Globals.getSettingsProperties().getBackSteppingEnabled())
                      ? Globals.program.getBackStepper().addRegisterFileRestore(num, regFile[i].setValue(val))
                      : regFile[i].setValue(val);
                break;
@@ -106,11 +106,11 @@ public class RegisterFile {
          }
       }
       if (num == 33) {// updates the hi register
-         old = (Globals.getSettings().getBackSteppingEnabled())
+         old = (Globals.getSettingsProperties().getBackSteppingEnabled())
                ? Globals.program.getBackStepper().addRegisterFileRestore(num, hi.setValue(val))
                : hi.setValue(val);
       } else if (num == 34) {// updates the low register
-         old = (Globals.getSettings().getBackSteppingEnabled())
+         old = (Globals.getSettingsProperties().getBackSteppingEnabled())
                ? Globals.program.getBackStepper().addRegisterFileRestore(num, lo.setValue(val))
                : lo.setValue(val);
       }
@@ -260,7 +260,7 @@ public class RegisterFile {
    public static int setProgramCounter(int value) {
       int old = programCounter.getValue();
       programCounter.setValue(value);
-      if (Globals.getSettings().getBackSteppingEnabled()) {
+      if (Globals.getSettingsProperties().getBackSteppingEnabled()) {
          Globals.program.getBackStepper().addPCRestore(old);
       }
       return old;
@@ -308,7 +308,7 @@ public class RegisterFile {
       for (int i = 0; i < regFile.length; i++) {
          regFile[i].resetValue();
       }
-      initializeProgramCounter(Globals.getSettings().getStartAtMain());// replaces "programCounter.resetValue()", DPS
+      initializeProgramCounter(Globals.getSettingsProperties().getStartAtMain());// replaces "programCounter.resetValue()", DPS
                                                                        // 3/3/09
       hi.resetValue();
       lo.resetValue();

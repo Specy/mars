@@ -65,11 +65,7 @@ public class Globals {
     * Flag to determine whether or not to produce internal debugging information.
     **/
    public static boolean debug = false;
-   /**
-    * Object that contains various settings that can be accessed modified
-    * internally.
-    **/
-   static Settings settings;
+
    /**
     * String to GUI's RunI/O text area when echoing user input from pop-up dialog.
     */
@@ -121,10 +117,6 @@ public class Globals {
       return "Pete Sanderson and Kenneth Vollmar";
    }
 
-   public static Settings getSettings() {
-      return settings;
-   }
-
    private static SettingsProperties settingsProperties = new SettingsProperties();
    private static SyscallProperties syscallProperties = new SyscallProperties();
    private static ConfigProperties configProperties = new ConfigProperties();
@@ -158,13 +150,12 @@ public class Globals {
     * structures.
     **/
 
-   public static void initialize(boolean gui) {
+   public static void initialize() {
       if (!initialized) {
          memory = Memory.getInstance(); // clients can use Memory.getInstance instead of Globals.memory
          instructionSet = new InstructionSet();
          instructionSet.populate();
          symbolTable = new SymbolTable("global");
-         settings = new Settings(gui);
          initialized = true;
          debug = false;
          memory.clear(); // will establish memory configuration from setting

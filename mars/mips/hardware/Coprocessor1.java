@@ -356,7 +356,7 @@ public class Coprocessor1 {
       int old = 0;
       for (int i = 0; i < registers.length; i++) {
          if (registers[i].getNumber() == num) {
-            old = (Globals.getSettings().getBackSteppingEnabled())
+            old = (Globals.getSettingsProperties().getBackSteppingEnabled())
                   ? Globals.program.getBackStepper().addCoprocessor1Restore(num, registers[i].setValue(val))
                   : registers[i].setValue(val);
             break;
@@ -470,7 +470,7 @@ public class Coprocessor1 {
       if (flag >= 0 && flag < numConditionFlags) {
          old = getConditionFlag(flag);
          condition.setValue(Binary.setBit(condition.getValue(), flag));
-         if (Globals.getSettings().getBackSteppingEnabled())
+         if (Globals.getSettingsProperties().getBackSteppingEnabled())
             if (old == 0) {
                Globals.program.getBackStepper().addConditionFlagClear(flag);
             } else {
@@ -491,7 +491,7 @@ public class Coprocessor1 {
       if (flag >= 0 && flag < numConditionFlags) {
          old = getConditionFlag(flag);
          condition.setValue(Binary.clearBit(condition.getValue(), flag));
-         if (Globals.getSettings().getBackSteppingEnabled())
+         if (Globals.getSettingsProperties().getBackSteppingEnabled())
             if (old == 0) {
                Globals.program.getBackStepper().addConditionFlagClear(flag);
             } else {

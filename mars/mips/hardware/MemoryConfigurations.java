@@ -167,8 +167,8 @@ public class MemoryConfigurations {
          currentConfiguration = defaultConfiguration;
          // Get current config from settings
          // String currentConfigurationIdentifier =
-         // Globals.getSettings().getMemoryConfiguration();
-         setCurrentConfiguration(getConfigurationByName(Globals.getSettings().getMemoryConfiguration()));
+         // Globals.getSettingsProperties().getMemoryConfiguration();
+         setCurrentConfiguration(getConfigurationByName(Globals.getSettingsProperties().getMemoryConfiguration()));
          // Iterator configurationsIterator = getConfigurationsIterator();
          // while (configurationsIterator.hasNext()) {
          // MemoryConfiguration config =

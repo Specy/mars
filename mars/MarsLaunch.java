@@ -1,6 +1,7 @@
 package mars;
 
 import mars.util.*;
+import mars.config.SettingsProperties;
 import mars.mips.dump.*;
 import mars.mips.hardware.*;
 import mars.simulator.*;
@@ -131,7 +132,7 @@ public class MarsLaunch {
    private int simulateErrorExitCode;// MARS command exit code to return if simulation error occurs
 
    public MarsLaunch(String[] args) {
-      Globals.initialize(false);
+      Globals.initialize();
       // running from command line.
       // assure command mode works in headless environment (generates exception if
       // not)
@@ -433,8 +434,8 @@ public class MarsLaunch {
          return programRan;
       }
       try {
-         Globals.getSettings().setBooleanSettingNonPersistent(Settings.DELAYED_BRANCHING_ENABLED, delayedBranching);
-         Globals.getSettings().setBooleanSettingNonPersistent(Settings.SELF_MODIFYING_CODE_ENABLED, selfModifyingCode);
+         Globals.getSettingsProperties().setBooleanValue(SettingsProperties.DelayedBranching, delayedBranching);
+         Globals.getSettingsProperties().setBooleanValue(SettingsProperties.SelfModifyingCode, selfModifyingCode);
          File mainFile = new File((String) filenameList.get(0)).getAbsoluteFile();// First file is "main" file
          ArrayList filesToAssemble;
          if (assembleProject) {

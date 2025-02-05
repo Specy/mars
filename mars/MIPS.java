@@ -44,6 +44,7 @@ public class MIPS {
 
     public void initialize(boolean startAtMain) {
         RegisterFile.initializeProgramCounter(startAtMain);
+        Globals.initialize();
     }
 
     public boolean simulate(int[] breakpoints) throws ProcessingException {

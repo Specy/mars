@@ -2904,7 +2904,7 @@ public class InstructionSet {
    // the bottom (currently line 194, heavily commented).
 
    private void processBranch(int displacement) {
-      if (Globals.getSettings().getDelayedBranchingEnabled()) {
+      if (Globals.getSettingsProperties().getDelayedBranchingEnabled()) {
          // Register the branch target address (absolute byte address).
          DelayedBranch.register(RegisterFile.getProgramCounter() + (displacement << 2));
       } else {
@@ -2926,7 +2926,7 @@ public class InstructionSet {
     */
 
    private void processJump(int targetAddress) {
-      if (Globals.getSettings().getDelayedBranchingEnabled()) {
+      if (Globals.getSettingsProperties().getDelayedBranchingEnabled()) {
          DelayedBranch.register(targetAddress);
       } else {
          RegisterFile.setProgramCounter(targetAddress);
@@ -2947,7 +2947,7 @@ public class InstructionSet {
 
    private void processReturnAddress(int register) {
       RegisterFile.updateRegister(register, RegisterFile.getProgramCounter() +
-            ((Globals.getSettings().getDelayedBranchingEnabled()) ? Instruction.INSTRUCTION_LENGTH : 0));
+            ((Globals.getSettingsProperties().getDelayedBranchingEnabled()) ? Instruction.INSTRUCTION_LENGTH : 0));
    }
 
    private static class MatchMap implements Comparable {

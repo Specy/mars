@@ -339,7 +339,7 @@ public class Simulator extends Observable {
                   instruction.getSimulationCode().simulate(statement);
 
                   // IF statement added 7/26/06 (explanation above)
-                  if (Globals.getSettings().getBackSteppingEnabled()) {
+                  if (Globals.getSettingsProperties().getBackSteppingEnabled()) {
                      Globals.program.getBackStepper().addDoNothing(pc);
                   }
                } catch (ProcessingException pe) {

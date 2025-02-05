@@ -255,7 +255,7 @@ public class ProgramStatement {
                BasicInstructionFormat format = ((BasicInstruction) instruction).getInstructionFormat();
                if (format == BasicInstructionFormat.I_BRANCH_FORMAT) {
                   // address = (address -
-                  // (this.textAddress+((Globals.getSettings().getDelayedBranchingEnabled())?
+                  // (this.textAddress+((Globals.getSettingsProperties().getDelayedBranchingEnabled())?
                   // Instruction.INSTRUCTION_LENGTH : 0))) >> 2;
                   address = (address - (this.textAddress + Instruction.INSTRUCTION_LENGTH)) >> 2;
                   absoluteAddress = false;
@@ -736,11 +736,11 @@ public class ProgramStatement {
       public String toString() {
          /*
           * int addressBase =
-          * (Globals.getSettings().getBooleanSetting(Settings.DISPLAY_ADDRESSES_IN_HEX))
+          * (Globals.getSettingsProperties().getBooleanSetting(Settings.DISPLAY_ADDRESSES_IN_HEX))
           * ? mars.venus.NumberDisplayBaseChooser.HEXADECIMAL :
           * mars.venus.NumberDisplayBaseChooser.DECIMAL;
           * int valueBase =
-          * (Globals.getSettings().getBooleanSetting(Settings.DISPLAY_VALUES_IN_HEX)) ?
+          * (Globals.getSettingsProperties().getBooleanSetting(Settings.DISPLAY_VALUES_IN_HEX)) ?
           * mars.venus.NumberDisplayBaseChooser.HEXADECIMAL :
           * mars.venus.NumberDisplayBaseChooser.DECIMAL;
           * 

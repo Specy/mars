@@ -267,7 +267,7 @@ public class ExtendedInstruction extends Instruction {
       // come back to it for the
       // next major release.
       if (instruction.indexOf("DBNOP") >= 0) {
-         return Globals.getSettings().getDelayedBranchingEnabled() ? "nop" : "";
+         return Globals.getSettingsProperties().getDelayedBranchingEnabled() ? "nop" : "";
       }
       // substitute first operand token for template's RG1 or OP1, second for RG2 or
       // OP2, etc
@@ -556,7 +556,7 @@ public class ExtendedInstruction extends Instruction {
             String disabled = instruction.substring(index + 5, index + 6);
             String enabled = instruction.substring(index + 6, index + 7);
             instruction = substitute(instruction, "BROFF" + disabled + enabled,
-                  Globals.getSettings().getDelayedBranchingEnabled() ? enabled : disabled);
+                  Globals.getSettingsProperties().getDelayedBranchingEnabled() ? enabled : disabled);
          } catch (IndexOutOfBoundsException iooe) {
             instruction = substitute(instruction, "BROFF", "BAD_PSEUDO_OP_SPEC");
          }
@@ -686,7 +686,7 @@ public class ExtendedInstruction extends Instruction {
       int instructionCount = 0;
       for (int i = 0; i < translationList.size(); i++) {
          if (((String) translationList.get(i)).indexOf("DBNOP") >= 0
-               && !Globals.getSettings().getDelayedBranchingEnabled())
+               && !Globals.getSettingsProperties().getDelayedBranchingEnabled())
             continue;
          instructionCount++;
       }

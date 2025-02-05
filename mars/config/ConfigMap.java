@@ -15,4 +15,12 @@ public abstract class ConfigMap extends HashMap<String, String>{
         return Boolean.parseBoolean(get(key));
     }
 
+    public void setBooleanValue(String key, boolean value) {
+        put(key, Boolean.toString(value));
+    }
+
+    public void setIntegerValue(String key, int value) {
+        put(key, Integer.toString(value));
+    }
+
 }
