@@ -2,11 +2,6 @@ package mars.util;
 
 import mars.Globals;
 import mars.mips.hardware.*;
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.PrintStream;
 import java.util.*;
 
 /*

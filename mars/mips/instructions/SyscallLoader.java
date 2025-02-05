@@ -75,11 +75,6 @@ public class SyscallLoader {
       add(new SyscallMessageDialogInt(io));
       add(new SyscallMessageDialogString(io));
 
-      //those should probably go out of here
-      add(new SyscallMidiOut());
-      add(new SyscallMidiOutSync());
-
-      //add(new SyscallNumberOverride(null, null))
       add(new SyscallOpen());
       add(new SyscallPrintChar());
       add(new SyscallPrintDouble());
@@ -93,7 +88,6 @@ public class SyscallLoader {
       add(new SyscallRandFloat());
       add(new SyscallRandInt());
       add(new SyscallRandIntRange());
-      add(new SyscallRandSeed()); //TODO not sure if this is needed
       add(new SyscallRead());
       add(new SyscallReadChar());
       add(new SyscallReadDouble());
@@ -101,7 +95,6 @@ public class SyscallLoader {
       add(new SyscallReadInt());
       add(new SyscallReadString());
       add(new SyscallSbrk());
-      add(new SyscallSleep());
       add(new SyscallTime());
 
       syscallList = processSyscallNumberOverrides(syscallList);
@@ -111,14 +104,10 @@ public class SyscallLoader {
    // Will get any syscall number override specifications from MARS config file and
    // process them. This will alter syscallList entry for affected names.
    private List<Syscall> processSyscallNumberOverrides(List<Syscall> syscallList) {
-      ArrayList overrides = new Globals().getSyscallOverrides();
-      SyscallNumberOverride override;
-      Syscall syscall;
-      for (int index = 0; index < overrides.size(); index++) {
-         override = (SyscallNumberOverride) overrides.get(index);
+      List<SyscallNumberOverride> overrides = new Globals().getSyscallOverrides();
+      for (SyscallNumberOverride override : overrides) {
          boolean match = false;
-         for (int i = 0; i < syscallList.size(); i++) {
-            syscall = (Syscall) syscallList.get(i);
+         for (Syscall syscall : syscallList) {
             if (override.getName().equals(syscall.getName())) {
                // we have a match to service name, assign new number
                syscall.setNumber(override.getNumber());

@@ -4,6 +4,9 @@ import mars.mips.instructions.syscalls.*;
 import mars.mips.instructions.*;
 import mars.mips.hardware.*;
 import mars.assembler.*;
+import mars.config.ConfigProperties;
+import mars.config.SettingsProperties;
+import mars.config.SyscallProperties;
 import mars.util.*;
 import java.util.*;
 
@@ -42,10 +45,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  * @version August 2003
  */
 public class Globals {
-   // List these first because they are referenced by methods called at
-   // initialization.
-   private static String configPropertiesFile = "Config";
-   private static String syscallPropertiesFile = "Syscall";
 
    /** The set of implemented MIPS instructions. **/
    public static InstructionSet instructionSet;
@@ -88,7 +87,7 @@ public class Globals {
     */
    public static final String version = "4.5";
    /** List of accepted file extensions for MIPS assembly source files. */
-   public static final ArrayList fileExtensions = getFileExtensions();
+   public static final List<String> fileExtensions = getFileExtensions();
    /** Maximum length of scrolled message window (MARS Messages and Run I/O) */
    public static final int maximumMessageCharacters = getMessageLimit();
    /** Maximum number of assembler errors produced by one assemble operation */
@@ -126,6 +125,34 @@ public class Globals {
       return settings;
    }
 
+   private static SettingsProperties settingsProperties = new SettingsProperties();
+   private static SyscallProperties syscallProperties = new SyscallProperties();
+   private static ConfigProperties configProperties = new ConfigProperties();
+
+   public static void setSettingsProperties(SettingsProperties settingsProperties) {
+      Globals.settingsProperties = settingsProperties;
+   }
+
+   public static void setSyscallProperties(SyscallProperties syscallProperties) {
+      Globals.syscallProperties = syscallProperties;
+   }
+
+   public static void setConfigProperties(ConfigProperties configProperties) {
+      Globals.configProperties = configProperties;
+   }
+
+   public static SettingsProperties getSettingsProperties() {
+      return settingsProperties;
+   }
+    
+   public static SyscallProperties getSyscallProperties() {
+      return syscallProperties;
+   }
+
+   public static ConfigProperties getConfigProperties() {
+      return configProperties;
+   }
+
    /**
     * Method called once upon system initialization to create the global data
     * structures.
@@ -146,23 +173,23 @@ public class Globals {
 
    // Read byte limit of Run I/O or MARS Messages text to buffer.
    private static int getMessageLimit() {
-      return getIntegerProperty(configPropertiesFile, "MessageLimit", 1000000);
+      return Globals.configProperties.getIntegerValue(ConfigProperties.MessageLimit);
    }
 
    // Read limit on number of error messages produced by one assemble operation.
    private static int getErrorLimit() {
-      return getIntegerProperty(configPropertiesFile, "ErrorLimit", 200);
+      return Globals.configProperties.getIntegerValue(ConfigProperties.ErrorLimit);
    }
 
    // Read backstep limit (number of operations to buffer) from properties file.
    private static int getBackstepLimit() {
-      return getIntegerProperty(configPropertiesFile, "BackstepLimit", 1000);
+      return Globals.configProperties.getIntegerValue(ConfigProperties.BackstepLimit);
    }
 
    // Read ASCII default display character for non-printing characters, from
    // properties file.
    public static String getAsciiNonPrint() {
-      String anp = getPropertyEntry(configPropertiesFile, "AsciiNonPrint");
+      String anp =  Globals.configProperties.get(ConfigProperties.AsciiNonPrint);
       return (anp == null) ? "." : ((anp.equals("space")) ? " " : anp);
    }
 
@@ -170,7 +197,7 @@ public class Globals {
    // value is "null", substitute value of ASCII_NON_PRINT. If string is
    // "space", substitute string containing one space character.
    public static String[] getAsciiStrings() {
-      String let = getPropertyEntry(configPropertiesFile, "AsciiTable");
+      String let = Globals.configProperties.get(ConfigProperties.AsciiTable);
       String placeHolder = getAsciiNonPrint();
       String[] lets = let.split(" +");
       int maxLength = 0;
@@ -190,24 +217,10 @@ public class Globals {
       return lets;
    }
 
-   // Read and return integer property value for given file and property name.
-   // Default value is returned if property file or name not found.
-   private static int getIntegerProperty(String propertiesFile, String propertyName, int defaultValue) {
-      int limit = defaultValue; // just in case no entry is found
-      Properties properties = PropertiesFile.loadPropertiesFromFile(propertiesFile);
-      try {
-         limit = Integer.parseInt(properties.getProperty(propertyName, Integer.toString(defaultValue)));
-      } catch (NumberFormatException nfe) {
-      } // do nothing, I already have a default
-      return limit;
-   }
 
-   // Read assembly language file extensions from properties file. Resulting
-   // string is tokenized into array list (assume StringTokenizer default
-   // delimiters).
-   private static ArrayList getFileExtensions() {
-      ArrayList extensionsList = new ArrayList();
-      String extensions = getPropertyEntry(configPropertiesFile, "Extensions");
+   private static List<String> getFileExtensions() {
+      List<String> extensionsList = new ArrayList<String>();
+      String extensions = Globals.configProperties.get(ConfigProperties.Extensions);
       if (extensions != null) {
          StringTokenizer st = new StringTokenizer(extensions);
          while (st.hasMoreTokens()) {
@@ -217,52 +230,18 @@ public class Globals {
       return extensionsList;
    }
 
-   /**
-    * Get list of MarsTools that reside outside the MARS distribution.
-    * Currently this is done by adding the tool's path name to the list
-    * of values for the external_tools property. Use ";" as delimiter!
-    * 
-    * @return ArrayList. Each item is file path to .class file
-    *         of a class that implements MarsTool. If none, returns empty list.
-    */
-   public static ArrayList getExternalTools() {
-      ArrayList toolsList = new ArrayList();
-      String delimiter = ";";
-      String tools = getPropertyEntry(configPropertiesFile, "ExternalTools");
-      if (tools != null) {
-         StringTokenizer st = new StringTokenizer(tools, delimiter);
-         while (st.hasMoreTokens()) {
-            toolsList.add(st.nextToken());
-         }
-      }
-      return toolsList;
-   }
 
-   /**
-    * Read and return property file value (if any) for requested property.
-    * 
-    * @param propertiesFile name of properties file (do NOT include filename
-    *                       extension,
-    *                       which is assumed to be ".properties")
-    * @param propertyName   String containing desired property name
-    * @return String containing associated value; null if property not found
-    */
-   public static String getPropertyEntry(String propertiesFile, String propertyName) {
-      return PropertiesFile.loadPropertiesFromFile(propertiesFile).getProperty(propertyName);
-   }
 
    /**
     * Read any syscall number assignment overrides from config file.
     * 
     * @return ArrayList of SyscallNumberOverride objects
     */
-   public ArrayList getSyscallOverrides() {
-      ArrayList overrides = new ArrayList();
-      Properties properties = PropertiesFile.loadPropertiesFromFile(syscallPropertiesFile);
-      Enumeration keys = properties.keys();
-      while (keys.hasMoreElements()) {
-         String key = (String) keys.nextElement();
-         overrides.add(new SyscallNumberOverride(key, properties.getProperty(key)));
+   public List<SyscallNumberOverride> getSyscallOverrides() {
+      List<SyscallNumberOverride> overrides = new ArrayList<SyscallNumberOverride>();
+      Set<String> properties = Globals.syscallProperties.keySet();
+      for(String key : properties) {
+         overrides.add(new SyscallNumberOverride(key, Globals.syscallProperties.get(key)));
       }
       return overrides;
    }

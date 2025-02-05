@@ -114,18 +114,15 @@ public class Simulator extends Observable {
    public boolean simulate(MIPSprogram p, int pc, int maxSteps, int[] breakPoints)
          throws ProcessingException {
       simulatorThread = new SimThread(p, pc, maxSteps, breakPoints);
-      simulatorThread.start();
-
-         Object dun = simulatorThread.get(); // this should emulate join()
-         ProcessingException pe = simulatorThread.pe;
-         boolean done = simulatorThread.done;
-         if (done)
-            SystemIO.resetFiles(); // close any files opened in MIPS progra
-         this.simulatorThread = null;
-         if (pe != null) {
-            throw pe;
-         }
-         return done;
+      ProcessingException pe = simulatorThread.pe;
+      boolean done = simulatorThread.done;
+      if (done)
+         SystemIO.resetFiles(); // close any files opened in MIPS progra
+      this.simulatorThread = null;
+      if (pe != null) {
+         throw pe;
+      }
+      return done;
    }
 
    /**
@@ -195,7 +192,7 @@ public class Simulator extends Observable {
     * library.
     */
 
-   class SimThread extends SwingWorker { // TODO check this
+   class SimThread { // TODO check this
       private MIPSprogram p;
       private int pc, maxSteps;
       private int[] breakPoints;
@@ -218,7 +215,7 @@ public class Simulator extends Observable {
        *                    STEP. null if none.
        */
       SimThread(MIPSprogram p, int pc, int maxSteps, int[] breakPoints) {
-         super(false);
+         super();
          this.p = p;
          this.pc = pc;
          this.maxSteps = maxSteps;
@@ -247,14 +244,6 @@ public class Simulator extends Observable {
        */
 
       public Object construct() {
-         // The next two statements are necessary for GUI to be consistently updated
-         // before the simulation gets underway. Without them, this happens only
-         // intermittently,
-         // with a consequence that some simulations are interruptable using PAUSE/STOP
-         // and others
-         // are not (because one or the other or both is not yet enabled).
-         Thread.currentThread().setPriority(Thread.NORM_PRIORITY - 1);
-         Thread.yield(); // let the main thread run a bit to finish updating the GUI
 
          if (breakPoints == null || breakPoints.length == 0) {
             breakPoints = null;

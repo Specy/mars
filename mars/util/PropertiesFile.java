@@ -51,11 +51,10 @@ public class PropertiesFile {
     * @return Properties (Hashtable) of key-value pairs read from the file.
     */
 
-   public static Properties loadPropertiesFromFile(String file) {
+   public static Properties loadPropertiesFromText(String text) {
       Properties properties = new Properties();
       try {
-         InputStream is = PropertiesFile.class.getResourceAsStream("/" + file + ".properties");
-         properties.load(is);
+         properties.load(new StringReader(text));
       } catch (IOException ioe) {
       } // If it doesn't work, properties will be empty
       catch (NullPointerException npe) {

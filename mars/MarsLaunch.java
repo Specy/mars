@@ -535,8 +535,6 @@ public class MarsLaunch {
             public void update(Observable o, Object obj) {
                if (obj instanceof AccessNotice) {
                   AccessNotice notice = (AccessNotice) obj;
-                  if (!notice.accessIsFromMIPS())
-                     return;
                   if (notice.getAccessType() != AccessNotice.READ)
                      return;
                   MemoryAccessNotice m = (MemoryAccessNotice) notice;
@@ -733,14 +731,7 @@ public class MarsLaunch {
             segments += ", ";
          }
       }
-      ArrayList dumpFormats = (new DumpFormatLoader()).loadDumpFormats();
-      String formats = "";
-      for (int i = 0; i < dumpFormats.size(); i++) {
-         formats += ((DumpFormat) dumpFormats.get(i)).getCommandDescriptor();
-         if (i < dumpFormats.size() - 1) {
-            formats += ", ";
-         }
-      }
+  
       out.println("Usage:  Mars  [options] filename [additional filenames]");
       out.println("  Valid options (not case sensitive, separate by spaces) are:");
       out.println("      a  -- assemble only, do not simulate");
@@ -755,7 +746,6 @@ public class MarsLaunch {
       out.println("            Dump occurs at the end of simulation unless 'a' option is used.");
       out.println("            Segment and format are case-sensitive and possible values are:");
       out.println("            <segment> = " + segments);
-      out.println("            <format> = " + formats);
       out.println("      h  -- display this help.  Use by itself with no filename.");
       out.println("    hex  -- display memory or register contents in hexadecimal (default)");
       out.println("     ic  -- display count of MIPS basic instructions 'executed'");
