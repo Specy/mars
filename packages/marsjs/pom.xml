@@ -4,7 +4,7 @@
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
-    <groupId>mars</groupId>
+    <groupId>mips</groupId>
     <artifactId>packages</artifactId>
     <version>1.0-SNAPSHOT</version>
     <relativePath>../pom.xml</relativePath>
@@ -100,7 +100,7 @@
             <phase>process-classes</phase>
             <configuration>
               <targetDirectory>${project.build.directory}/generated/js</targetDirectory>
-              <mainClass>mipsjs.Module</mainClass>
+              <mainClass>marsjs.Module</mainClass>
               <debugInformationGenerated>true</debugInformationGenerated>
               <sourceMapsGenerated>true</sourceMapsGenerated>
               <minifying>true</minifying>
