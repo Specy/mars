@@ -1,9 +1,12 @@
-   package mars.mips.instructions.syscalls;
-   import mars.util.*;
-   import mars.mips.hardware.*;
-	import mars.simulator.*;
-   import mars.*;
-import javax.swing.JOptionPane;
+package mars.mips.instructions.syscalls;
+
+import mars.util.*;
+import mars.mips.hardware.*;
+import mars.mips.io.MIPSIO;
+import mars.simulator.*;
+
+
+import mars.*;
 
 /*
 Copyright (c) 2003-2008,  Pete Sanderson and Kenneth Vollmar
@@ -38,59 +41,57 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  *
  */
 
-    public class SyscallMessageDialogDouble extends AbstractSyscall {
+public class SyscallMessageDialogDouble extends AbstractSyscall {
+   MIPSIO io;
+
    /**
     * Build an instance of the syscall with its default service number and name.
     */
-       public SyscallMessageDialogDouble() {
-         super(58, "MessageDialogDouble");
-      }
+   public SyscallMessageDialogDouble(MIPSIO io) {
+      super(58, "MessageDialogDouble");
+      this.io = io;
+   }
 
    /**
-   * System call to display a message to user.
-   */
-       public void simulate(ProgramStatement statement) throws ProcessingException {
-          // Input arguments:
-          //   $a0 = address of null-terminated string that is an information-type message to user
-          //   $f12 = double value to display in string form after the first message
-          // Output: none
+    * System call to display a message to user.
+    */
+   public void simulate(ProgramStatement statement) throws ProcessingException {
+      // Input arguments:
+      // $a0 = address of null-terminated string that is an information-type message
+      // to user
+      // $f12 = double value to display in string form after the first message
+      // Output: none
 
-         String message = new String(); // = "";
-         int byteAddress = RegisterFile.getValue(4);
-         char ch[] = { ' '}; // Need an array to convert to String
-         try
+      String message = new String(); // = "";
+      int byteAddress = RegisterFile.getValue(4);
+      char ch[] = { ' ' }; // Need an array to convert to String
+      try {
+         ch[0] = (char) Globals.memory.getByte(byteAddress);
+         while (ch[0] != 0) // only uses single location ch[0]
          {
+            message = message.concat(new String(ch)); // parameter to String constructor is a char[] array
+            byteAddress++;
             ch[0] = (char) Globals.memory.getByte(byteAddress);
-            while (ch[0] != 0) // only uses single location ch[0]
-            {
-               message = message.concat(new String(ch)); // parameter to String constructor is a char[] array
-               byteAddress++;
-               ch[0] = (char) Globals.memory.getByte(byteAddress);
-            }
          }
-             catch (AddressErrorException e)
-            {
-               throw new ProcessingException(statement, e);
-            }
+      } catch (AddressErrorException e) {
+         throw new ProcessingException(statement, e);
+      }
 
+      // Display the dialog.
+      try {
+         this.io.outputDialog(
+               message + Double.toString(Coprocessor1.getDoubleFromRegisterPair("$f12")),
+               1);
+      }
 
-            // Display the dialog.
-            try
-            {
-            JOptionPane.showMessageDialog(null,
-                  message + Double.toString(  Coprocessor1.getDoubleFromRegisterPair("$f12") ),
-                  null,
-                  JOptionPane.INFORMATION_MESSAGE );
-            }
-            
-               catch (InvalidRegisterAccessException e)   // register ID error in this method
-               {
-                  RegisterFile.updateRegister(5, -1 );  // set $a1 to -1 flag
-                   throw new ProcessingException(statement,
-                       "invalid int reg. access during double input (syscall "+this.getNumber()+")",
-						           Exceptions.SYSCALL_EXCEPTION);
-               }
-
-       }
+      catch (InvalidRegisterAccessException e) // register ID error in this method
+      {
+         RegisterFile.updateRegister(5, -1); // set $a1 to -1 flag
+         throw new ProcessingException(statement,
+               "invalid int reg. access during double input (syscall " + this.getNumber() + ")",
+               Exceptions.SYSCALL_EXCEPTION);
+      }
 
    }
+
+}

@@ -1,4 +1,5 @@
 package mars.mips.instructions;
+
 import mars.*;
 
 /*
@@ -30,11 +31,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
 /**
- * Interface to represent the method for simulating the execution of a specific MIPS basic
- * instruction.  It will be implemented by the anonymous class created in the last
+ * Interface to represent the method for simulating the execution of a specific
+ * MIPS basic
+ * instruction. It will be implemented by the anonymous class created in the
+ * last
  * argument to the BasicInstruction constructor.
  * 
- * @author Pete Sanderson 
+ * @author Pete Sanderson
  * @version August 2003
  * 
  */
@@ -44,9 +47,11 @@ public interface SimulationCode {
     /**
      * Method to simulate the execution of a specific MIPS basic instruction.
      * 
-     * @param statement A ProgramStatement representing the MIPS instruction to simulate. 
-     * @throws ProcessingException This is a run-time exception generated during simulation.
+     * @param statement A ProgramStatement representing the MIPS instruction to
+     *                  simulate.
+     * @throws ProcessingException This is a run-time exception generated during
+     *                             simulation.
      **/
-     
-	public void simulate(ProgramStatement statement) throws ProcessingException;
+
+    public void simulate(ProgramStatement statement) throws ProcessingException;
 }
