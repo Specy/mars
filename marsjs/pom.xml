@@ -99,16 +99,24 @@
                         <phase>process-classes</phase>
                         <configuration>
                             <targetDirectory>${project.build.directory}/generated/js</targetDirectory>
-                            <mainClass>app.specy.marsjs.Module</mainClass>
+                            <mainClass>app.specy.marsjs.MipsJs</mainClass>
                             <debugInformationGenerated>true</debugInformationGenerated>
                             <sourceMapsGenerated>true</sourceMapsGenerated>
-                            <minifying>true</minifying>
+                            <minifying>false</minifying>
                             <optimizationLevel>ADVANCED</optimizationLevel>
                             <targetType>JAVASCRIPT</targetType>
                             <jsModuleType>ES2015</jsModuleType>
                         </configuration>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <source>15</source>
+                    <target>15</target>
+                </configuration>
             </plugin>
         </plugins>
     </build>

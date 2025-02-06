@@ -6,6 +6,7 @@ import app.specy.mars.mips.fs.MemoryFileSystem;
 import app.specy.mars.mips.hardware.RegisterFile;
 import app.specy.mars.mips.instructions.SyscallLoader;
 import app.specy.mars.mips.io.MIPSIO;
+import app.specy.mars.simulator.Simulator;
 import app.specy.mars.util.SystemIO;
 
 public class MIPS {
@@ -13,6 +14,8 @@ public class MIPS {
     private List<MIPSprogram> programs;
     private MIPSprogram main;
     private static MIPSIO io;
+
+
 
     public void setIo(MIPSIO io) {
         MIPS.io = io;
@@ -37,13 +40,16 @@ public class MIPS {
         return MIPS.fromFs("main", files);
     }
 
+    public static void initializeMIPS() {
+        Globals.initialize();
+    }
+
     public ErrorList assemble() throws ProcessingException {
         return this.main.assemble(this.programs, true);
     }
 
     public void initialize(boolean startAtMain) {
         RegisterFile.initializeProgramCounter(startAtMain);
-        Globals.initialize();
     }
 
     public boolean simulate(int[] breakpoints) throws ProcessingException {
@@ -59,4 +65,13 @@ public class MIPS {
     public boolean step() throws ProcessingException {
         return this.main.simulateStepAtPC();
     }
+
+    public MIPSprogram getProgram() {
+        return this.main;
+    }
+
+    public Simulator getSimulator() {
+        return Simulator.getInstance();
+    }
+
 }

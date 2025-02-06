@@ -33,7 +33,7 @@ public class MemoryFileSystem extends MIPSFileSystem {
         files.put(path, content);
         return this;
     }
-    
+
     public List<MIPSFile> getFiles() {
         return files.entrySet().stream().map(e -> new MIPSFile(e.getKey(), e.getValue())).toList();
     }

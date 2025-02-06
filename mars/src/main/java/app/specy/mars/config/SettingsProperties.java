@@ -28,6 +28,11 @@ public class SettingsProperties extends ConfigMap {
 
     public static final String MemoryConfiguration = "MemoryConfiguration";
 
+    public SettingsProperties() {
+        super();
+        reset();
+    }
+
     public void reset() {
         put(AssembleAll, "false");
         put(AssembleOnOpen, "false");

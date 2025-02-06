@@ -115,6 +115,7 @@ public class Simulator extends Observable {
    public boolean simulate(MIPSprogram p, int pc, int maxSteps, int[] breakPoints)
          throws ProcessingException {
       simulatorThread = new SimThread(p, pc, maxSteps, breakPoints);
+      simulatorThread.construct();
       ProcessingException pe = simulatorThread.pe;
       boolean done = simulatorThread.done;
       if (done)
