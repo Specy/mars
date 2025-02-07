@@ -13,6 +13,7 @@ First create an instance of the simulator with the `makeMipsfromSource` function
 
 Before running the simulator, you must assemble and initialize it.  You can then step through the program, simulate with breakpoints, or simulate with a limit.
 
+⚠️**WARNING**⚠️ You must have only one instance of the simulator at a time. Memory, registers, and other state are shared between instances. 
 
 ```typescript
 import { makeMipsfromSource, JsMips, RegisterName, BackStepAction } from '@specy/mips';

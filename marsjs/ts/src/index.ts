@@ -1,5 +1,5 @@
 //@ts-ignore
-import {makeMipsfromSource as _makeMipsfromSource} from './generated/mars'
+import {makeMipsfromSource as _makeMipsfromSource, initializeMIPS as _initializeMIPS} from './generated/mars'
 
 /**
  * Represents a statement in the assembled program.
@@ -176,7 +176,7 @@ export interface JsMips {
 
     /**
      * Registers a handler function for a specific event or condition.
-     * @param name The name of the event or condition.  Possible values include "openFile", "closeFile", "writeFile", "readFile", "confirm", "inputDialog", "outputDialog", "askInt", "askDouble", "askFloat", "askString", "readInt", "readDouble", "readFloat", "readString", "readChar", "logLine", "log", "printChar", "printDouble", "printFloat", "printInt", "printString", "stdIn", "stdOut", "stdErr".
+     * @param name The name of the event or condition.
      * @param handler The handler function to be called when the event occurs. The function signature depends on the event name.
      */
     registerHandler(name: HandlerName, handler: Function): void;
@@ -247,8 +247,20 @@ export interface JsMips {
 }
 
 
+
+/**
+ * Creates a new MIPS simulator from the given source code.
+ * @param source The source code to assemble.
+ * @returns A new `JsMips` object.
+ */
 export function makeMipsfromSource(source: string): JsMips {
+    initializeMIPS()
     return _makeMipsfromSource(source) as JsMips
 }
 
-
+/**
+ * Initializes the MIPS simulator.
+ */
+function initializeMIPS(): void {
+    _initializeMIPS()
+}

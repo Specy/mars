@@ -1,6 +1,6 @@
 {
   "name": "@specy/mips",
-  "version": "1.0.1",
+  "version": "1.0.4",
   "keywords": [
     "mips",
     "mars",
@@ -15,7 +15,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts"
   },
-  "main": "./dist/index.cjs",
+  "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "files": [

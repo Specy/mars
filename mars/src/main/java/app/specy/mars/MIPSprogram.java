@@ -343,6 +343,7 @@ public class MIPSprogram {
       this.backStepper = null;
       Assembler asm = new Assembler();
       this.machineList = asm.assemble(MIPSprogramsToAssemble, extendedAssemblerEnabled, warningsAreErrors);
+      this.machineListPCMap = new HashMap<Integer, ProgramStatement>();
       for(ProgramStatement ps : machineList) {
          machineListPCMap.put(ps.getAddress(), ps);
       }
