@@ -98,8 +98,9 @@
                         </goals>
                         <phase>process-classes</phase>
                         <configuration>
-                            <targetDirectory>${project.build.directory}/generated/js</targetDirectory>
-                            <mainClass>app.specy.marsjs.MipsJs</mainClass>
+                            <targetDirectory>${project.basedir}/ts/src/generated</targetDirectory>
+                            <targetFileName>mars.js</targetFileName>
+                            <mainClass>app.specy.marsjs.JsMips</mainClass>
                             <debugInformationGenerated>true</debugInformationGenerated>
                             <sourceMapsGenerated>true</sourceMapsGenerated>
                             <minifying>false</minifying>

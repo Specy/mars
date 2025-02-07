@@ -37,30 +37,36 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
 public class SyscallPrintString extends AbstractSyscall {
-   /**
-    * Build an instance of the Print String syscall. Default service number
-    * is 4 and name is "PrintString".
-    */
-   public SyscallPrintString() {
-      super(4, "PrintString");
-   }
+    /**
+     * Build an instance of the Print String syscall. Default service number
+     * is 4 and name is "PrintString".
+     */
+    public SyscallPrintString() {
+        super(4, "PrintString");
+    }
 
-   /**
-    * Performs syscall function to print string stored starting at address in $a0.
-    */
-   public void simulate(ProgramStatement statement) throws ProcessingException {
-      int byteAddress = RegisterFile.getValue(4);
-      char ch = 0;
-      try {
-         ch = (char) Globals.memory.getByte(byteAddress);
-         // won't stop until NULL byte reached!
-         while (ch != 0) {
-            SystemIO.printString(new Character(ch).toString());
-            byteAddress++;
+    /**
+     * Performs syscall function to print string stored starting at address in $a0.
+     */
+    public void simulate(ProgramStatement statement) throws ProcessingException {
+        int byteAddress = RegisterFile.getValue(4);
+        int maxChars = 65536; // arbitrary upper limit
+        char ch = 0;
+        try {
             ch = (char) Globals.memory.getByte(byteAddress);
-         }
-      } catch (AddressErrorException e) {
-         throw new ProcessingException(statement, e);
-      }
-   }
+            // won't stop until NULL byte reached or maximum characters printed
+            while (ch != 0) {
+                maxChars--;
+                if (maxChars < 0) {
+                    throw new ProcessingException(statement,
+                            "String length exceeds system limit of 65536 characters");
+                }
+                SystemIO.printChar(ch);
+                byteAddress++;
+                ch = (char) Globals.memory.getByte(byteAddress);
+            }
+        } catch (AddressErrorException e) {
+            throw new ProcessingException(statement, e);
+        }
+    }
 }

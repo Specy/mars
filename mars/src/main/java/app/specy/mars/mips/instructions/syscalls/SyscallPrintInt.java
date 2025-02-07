@@ -50,7 +50,6 @@ public class SyscallPrintInt extends AbstractSyscall {
     * Performs syscall function to print on the console the integer stored in $a0.
     */
    public void simulate(ProgramStatement statement) throws ProcessingException {
-      SystemIO.printString(
-            new Integer(RegisterFile.getValue(4)).toString());
+      SystemIO.printInt(RegisterFile.getValue(4));
    }
 }

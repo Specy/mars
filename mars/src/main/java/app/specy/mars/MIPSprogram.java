@@ -54,6 +54,7 @@ public class MIPSprogram {
    private ArrayList tokenList;
    private ArrayList parsedList;
    private List<ProgramStatement> machineList;
+   private Map<Integer, ProgramStatement> machineListPCMap;
    private BackStepper backStepper;
    private SymbolTable localSymbolTable;
    private MacroPool macroPool;
@@ -342,8 +343,15 @@ public class MIPSprogram {
       this.backStepper = null;
       Assembler asm = new Assembler();
       this.machineList = asm.assemble(MIPSprogramsToAssemble, extendedAssemblerEnabled, warningsAreErrors);
+      for(ProgramStatement ps : machineList) {
+         machineListPCMap.put(ps.getAddress(), ps);
+      }
       this.backStepper = new BackStepper();
       return asm.getErrorList();
+   }
+
+   public ProgramStatement getMachineStatement(int address) {
+      return machineListPCMap.get(address);
    }
 
    /**

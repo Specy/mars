@@ -54,13 +54,6 @@ public abstract class MIPSIO {
 
     public abstract void printString(String l);
 
-    public abstract double randomDouble();
-
-    public abstract float randomFloat();
-
-    public abstract int randomInt();
-
-    public abstract int randomIntWithRange(int max);
 
     public abstract void sleep(int milliseconds);
 

@@ -127,6 +127,11 @@ public class Simulator extends Observable {
       return done;
    }
 
+   public boolean hasTerminated() {
+      return simulatorThread == null || simulatorThread.done;
+   }
+
+
    /**
     * Set the volatile stop boolean variable checked by the execution
     * thread at the end of each MIPS instruction execution. If variable

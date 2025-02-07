@@ -1,21 +1,6 @@
-[![npm](https://img.shields.io/npm/v/@specy/mips.svg)](https://www.npmjs.com/package/@specy/mips)
+# MipsJs
 
-# MARS
-
-This is a fork of the [original MARS editor](https://github.com/dpetersanderson/MARS). 
-
-It has been made to decouple the UI from the core simulator.
-
-The repository is split into two parts:
-- `mars` Which contains the core simulator and class interfaces to implement IO.
-- `marsjs` A Typescript library that compiles the simulator to JavaScript and provides a simple interface to interact with it.
-
-If you are looking for the original MARS, you can find it [here](https://dpetersanderson.github.io/)
-
-If you are looking for the mips docs, you can find it [here](https://dpetersanderson.github.io/Help/MarsHelpIntro.html)
-
-
-# MarsJS
+A JavaScript library for simulating MIPS assembly code.  This library provides an interface to assemble, execute, and inspect the state of a MIPS simulator.  It's built by compiling the [mars](https://github.com/dpetersanderson/MARS) simulator with [TeaVM](https://teavm.org/), with some glue code on top to make it easier to use.
 
 ## Installation
 

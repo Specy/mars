@@ -27,15 +27,15 @@ public class JsMIPSIO extends MIPSIO {
     private JSObject callHandler(String name, JSObject... args) {
         JSFunction handler = handlers.get(name);
         if (handler == null) throw new IllegalArgumentException("No handler registered for " + name);
-        if(args.length == 0) return (JSObject) handler.call(null);
-        if(args.length == 1) return (JSObject) handler.call(null, args[0]);
-        if(args.length == 2) return (JSObject) handler.call(null, args[0], args[1]);
-        if(args.length == 3) return (JSObject) handler.call(null, args[0], args[1], args[2]);
-        if(args.length == 4) return (JSObject) handler.call(null, args[0], args[1], args[2], args[3]);
-        if(args.length == 5) return (JSObject) handler.call(null, args[0], args[1], args[2], args[3], args[4]);
-        if(args.length == 6) return (JSObject) handler.call(null, args[0], args[1], args[2], args[3], args[4], args[5]);
-        if(args.length == 7) return (JSObject) handler.call(null, args[0], args[1], args[2], args[3], args[4], args[5], args[6]);
-        if(args.length == 8) return (JSObject) handler.call(null, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7]);
+        if(args.length == 0) return (JSObject) handler.call(handler);
+        if(args.length == 1) return (JSObject) handler.call(handler, args[0]);
+        if(args.length == 2) return (JSObject) handler.call(handler, args[0], args[1]);
+        if(args.length == 3) return (JSObject) handler.call(handler, args[0], args[1], args[2]);
+        if(args.length == 4) return (JSObject) handler.call(handler, args[0], args[1], args[2], args[3]);
+        if(args.length == 5) return (JSObject) handler.call(handler, args[0], args[1], args[2], args[3], args[4]);
+        if(args.length == 6) return (JSObject) handler.call(handler, args[0], args[1], args[2], args[3], args[4], args[5]);
+        if(args.length == 7) return (JSObject) handler.call(handler, args[0], args[1], args[2], args[3], args[4], args[5], args[6]);
+        if(args.length == 8) return (JSObject) handler.call(handler, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7]);
         throw new IllegalArgumentException("Too many arguments, max 8");
     }
 
@@ -92,13 +92,25 @@ public class JsMIPSIO extends MIPSIO {
 
     @Override
     public void writeFile(int fileDescriptor, byte[] buffer) throws MIPSIOError {
-        //TODO
         callHandler("writeFile", JSNumber.valueOf(fileDescriptor), JSArray.of(buffer));
     }
 
     @Override
     public int readFile(int fileDescriptor, byte[] destination, int length) throws MIPSIOError {
-        return callIntHandler("readFile", JSNumber.valueOf(fileDescriptor), JSArray.of(destination), JSNumber.valueOf(length));
+        JSObject result = callHandler("readFile", JSNumber.valueOf(fileDescriptor), JSArray.of(destination), JSNumber.valueOf(length));
+        if(result instanceof JSArray){
+            JSArray<JSObject> array = (JSArray<JSObject>) result;
+            if(array.getLength() != 2){
+                throw new MIPSIOError("Read file expects a tuple of 2 elements, the first being if the EOF was reached (-1), and the second being the buffer");
+            }
+            JSNumber eof = (JSNumber) array.get(0);
+            JSArray<Byte> buffer = (JSArray<Byte>) array.get(1);
+            for(int i = 0; i < buffer.getLength(); i++){
+                destination[i] = buffer.get(i);
+            }
+            return eof.intValue();
+        }
+        throw new MIPSIOError("Read file expects a tuple of 2 elements, the first being if the EOF was reached (-1), and the second being the buffer");
     }
 
     @Override
@@ -200,42 +212,22 @@ public class JsMIPSIO extends MIPSIO {
     }
 
     @Override
-    public double randomDouble() {
-        return callDoubleHandler("randomDouble");
-    }
-
-    @Override
-    public float randomFloat() {
-        return callFloatHandler("randomFloat");
-    }
-
-    @Override
-    public int randomInt() {
-        return callIntHandler("randomInt");
-    }
-
-    @Override
-    public int randomIntWithRange(int max) {
-        return callIntHandler("randomIntWithRange", JSNumber.valueOf(max));
-    }
-
-    @Override
     public void sleep(int milliseconds) {
 
     }
 
     @Override
     public void stdIn(byte[] buffer, int length) {
-
+        callHandler("stdIn", JSArray.of(buffer), JSNumber.valueOf(length));
     }
 
     @Override
     public void stdOut(byte[] buffer) {
-
+        callHandler("stdOut", JSArray.of(buffer));
     }
 
     @Override
     public void stdErr(byte[] buffer) {
-
+        callHandler("stdErr", JSArray.of(buffer));
     }
 }

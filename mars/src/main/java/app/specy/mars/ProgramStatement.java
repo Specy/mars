@@ -60,6 +60,8 @@ public class ProgramStatement {
    private boolean altered;
    private static final String invalidOperator = "<INVALID>";
 
+
+
    //////////////////////////////////////////////////////////////////////////////////
    /**
     * Constructor for ProgramStatement when there are links back to all source and

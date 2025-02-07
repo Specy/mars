@@ -113,7 +113,24 @@ public class SystemIO {
       io.printString(string);
    }
 
-   /**
+   public static void printInt(int value) {
+      io.printInt(value);
+   }
+
+    public static void printFloat(float value) {
+        io.printFloat(value);
+    }
+
+    public static void printDouble(double value) {
+        io.printDouble(value);
+    }
+
+    public static void printChar(char value) {
+        io.printChar(value);
+    }
+
+
+    /**
     * Implements syscall to read a string.
     * 
     * @param serviceNumber the number assigned to Read String syscall (default 8)

@@ -63,6 +63,7 @@ public class SyscallRandDouble extends AbstractSyscall {
       Random stream = (Random) RandomStreams.randomStreams.get(index);
       if (stream == null) {
          stream = new Random(); // create a non-seeded stream
+
          RandomStreams.randomStreams.put(index, stream);
       }
       try {
