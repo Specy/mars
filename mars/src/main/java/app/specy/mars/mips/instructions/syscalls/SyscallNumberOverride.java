@@ -33,8 +33,9 @@ public class SyscallNumberOverride {
       try {
          this.newServiceNumber = Integer.parseInt(value.trim());
       } catch (NumberFormatException e) {
-         System.out.println("Error processing Syscall number override: '" + value.trim() + "' is not a valid integer");
-         System.exit(0);
+         String message = "Error processing Syscall number override: '" + value.trim() + "' is not a valid integer";
+         System.out.println(message);
+         throw new NumberFormatException(message);
       }
    }
 

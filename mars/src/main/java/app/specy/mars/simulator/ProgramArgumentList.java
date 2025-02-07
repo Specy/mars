@@ -200,7 +200,7 @@ public class ProgramArgumentList {
          // // argv
       } catch (AddressErrorException aee) {
          System.out.println("Internal Error: Memory write error occurred while storing program arguments! " + aee);
-         System.exit(0);
+         throw new RuntimeException("Internal Error: Memory write error occurred while storing program arguments! " + aee);
       }
       return;
    }

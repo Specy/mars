@@ -90,6 +90,7 @@ public class SyscallLoader {
       add(new SyscallRandInt());
       add(new SyscallRandIntRange());
       add(new SyscallRead());
+      add(new SyscallWrite());
       add(new SyscallReadChar());
       add(new SyscallReadDouble());
       add(new SyscallReadFloat());
@@ -116,9 +117,10 @@ public class SyscallLoader {
             }
          }
          if (!match) {
-            System.out.println("Error: syscall name '" + override.getName() +
-                  "' in config file does not match any name in syscall list");
-            System.exit(0);
+            String message = "Error: syscall name '" + override.getName() +
+                    "' in config file does not match any name in syscall list";
+            System.out.println(message);
+            throw new RuntimeException(message);
          }
       }
       // Wait until end to check for duplicate numbers. To do so earlier
@@ -141,7 +143,8 @@ public class SyscallLoader {
          }
       }
       if (duplicates) {
-         System.exit(0);
+         System.out.println("Cannot continue with duplicate syscall numbers.");
+         throw new RuntimeException("Duplicate syscall numbers");
       }
       return syscallList;
    }

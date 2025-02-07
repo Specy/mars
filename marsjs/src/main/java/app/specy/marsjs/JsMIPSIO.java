@@ -2,8 +2,49 @@ package app.specy.marsjs;
 
 import app.specy.mars.mips.io.MIPSIO;
 import app.specy.mars.mips.io.MIPSIOError;
+import org.teavm.jso.JSExport;
+import org.teavm.jso.JSObject;
 
-public class JsIO extends MIPSIO {
+import java.util.HashMap;
+import java.util.Map;
+
+public class JsMIPSIO extends MIPSIO {
+
+    private final Map<String, IOHandler> handlers = new HashMap<>();
+
+    @JSExport
+    public JsMIPSIO() {
+        super();
+    }
+
+    public interface IOHandler extends JSObject {
+        Object invoke(Object... args);
+    }
+
+
+    @Override
+    public int askInt(String message) {
+        Object result = callHandler("askInt", message);
+        if (result instanceof Number) {
+            return ((Number) result).intValue();
+        } else {
+            throw new IllegalArgumentException("Invalid result type");
+        }
+    }
+
+
+    // Method to register a handler
+    public void registerHandler(String name, IOHandler handler) {
+        handlers.put(name, handler);
+    }
+
+    // Helper method to safely invoke handlers
+    private Object callHandler(String name, Object... args) {
+        IOHandler handler = handlers.get(name);
+        if (handler == null) throw new IllegalArgumentException("No handler registered for " + name);
+        return handler.invoke(args);
+    }
+
     @Override
     public int openFile(String filename, int flags, boolean append) throws MIPSIOError {
         return 0;
@@ -49,10 +90,7 @@ public class JsIO extends MIPSIO {
         return 0;
     }
 
-    @Override
-    public int askInt(String message) {
-        return 0;
-    }
+
 
     @Override
     public String askString(String message) {
@@ -71,7 +109,12 @@ public class JsIO extends MIPSIO {
 
     @Override
     public int readInt() {
-        return 0;
+        Object result = callHandler("readInt");
+        if (result instanceof Number) {
+            return ((Number) result).intValue();
+        } else {
+            throw new IllegalArgumentException("Invalid result type");
+        }
     }
 
     @Override

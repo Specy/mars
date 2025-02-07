@@ -17,7 +17,7 @@ public class MIPS {
 
 
 
-    public void setIo(MIPSIO io) {
+    public static void setIo(MIPSIO io) {
         MIPS.io = io;
         Globals.instructionSet.setSyscallLoader(new SyscallLoader(io));
         SystemIO.setMIPSIO(io);

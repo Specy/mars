@@ -186,9 +186,10 @@ public class BackStepper {
                      break;
                }
             } catch (Exception e) {
+               String message = "Internal MARS error: address exception while back-stepping.";
                // if the original action did not cause an exception this will not either.
-               System.out.println("Internal MARS error: address exception while back-stepping.");
-               System.exit(0);
+               System.out.println(message);
+               throw new RuntimeException(message);
             }
          } while (!backSteps.empty() && statement == ((BackStep) backSteps.peek()).ps);
          engaged = true; // RESET IT (was disabled at top of loop -- see comment)

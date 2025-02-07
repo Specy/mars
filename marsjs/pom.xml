@@ -102,7 +102,7 @@
                             <mainClass>app.specy.marsjs.MipsJs</mainClass>
                             <debugInformationGenerated>true</debugInformationGenerated>
                             <sourceMapsGenerated>true</sourceMapsGenerated>
-                            <minifying>true</minifying>
+                            <minifying>false</minifying>
                             <optimizationLevel>ADVANCED</optimizationLevel>
                             <targetType>JAVASCRIPT</targetType>
                             <jsModuleType>ES2015</jsModuleType>

@@ -357,7 +357,7 @@ public class Memory extends Observable {
       kernelDataBlockTable = new int[BLOCK_TABLE_LENGTH][];
       stackBlockTable = new int[BLOCK_TABLE_LENGTH][];
       memoryMapBlockTable = new int[MMIO_TABLE_LENGTH][];
-      System.gc(); // call garbage collector on any Table memory just deallocated.
+      //System.gc(); // call garbage collector on any Table memory just deallocated.
    }
 
    /**
