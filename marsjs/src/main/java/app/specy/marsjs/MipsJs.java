@@ -2,6 +2,8 @@ package app.specy.marsjs;
 
 import app.specy.mars.MIPS;
 import app.specy.mars.ProcessingException;
+import app.specy.mars.mips.hardware.RegisterFile;
+import app.specy.mars.simulator.Simulator;
 import org.teavm.jso.JSExport;
 import org.teavm.jso.JSObject;
 
@@ -12,6 +14,10 @@ public class MipsJs {
         this.main = main;
     }
 
+    @JSExport
+    public static void initializeMIPS() {
+        MIPS.initializeMIPS();
+    }
 
     @JSExport
     public static MipsJs makeMipsfromSource(String source) throws ProcessingException {
@@ -48,4 +54,8 @@ public class MipsJs {
         return this.main.simulate(breakpoints, limit);
     }
 
+    @JSExport
+    public int getRegisterValue(String register) {
+        return RegisterFile.getUserRegister(register).getValue();
+    }
 }

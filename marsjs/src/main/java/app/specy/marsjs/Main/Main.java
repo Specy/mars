@@ -16,7 +16,6 @@ public class Main {
             mips.assemble();
             mips.initialize(true);
             mips.simulate(1000);
-            mips.getSimulator();
             System.out.println(RegisterFile.getUserRegister("$a0").getValue());
         } catch (Exception e) {
             e.printStackTrace();
