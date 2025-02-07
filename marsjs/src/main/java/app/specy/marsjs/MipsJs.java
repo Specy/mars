@@ -9,6 +9,7 @@ import app.specy.mars.mips.instructions.SyscallLoader;
 import app.specy.mars.simulator.Simulator;
 import org.teavm.jso.JSExport;
 import org.teavm.jso.JSObject;
+import org.teavm.jso.core.JSFunction;
 
 public class MipsJs {
     private MIPS main;
@@ -73,7 +74,7 @@ public class MipsJs {
     }
 
     @JSExport
-    public void registerHandler(String name, JsMIPSIO.IOHandler handler) {
+    public void registerHandler(String name, JSFunction handler) {
         getIOHandler().registerHandler(name, handler);
     }
 

@@ -62,9 +62,6 @@ public abstract class MIPSIO {
 
     public abstract int randomIntWithRange(int max);
 
-    //TODO not sure if this is needed
-    public abstract void setRandomSeed(int seed);
-
     public abstract void sleep(int milliseconds);
 
     public abstract void stdIn(byte[] buffer, int length);
