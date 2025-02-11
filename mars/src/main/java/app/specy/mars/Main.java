@@ -1,23 +1,24 @@
-package app.specy.marsjs.Main;
+package app.specy.mars;
 
-import app.specy.mars.Globals;
-import app.specy.mars.MIPS;
 import app.specy.mars.mips.hardware.RegisterFile;
 import app.specy.mars.mips.instructions.SyscallLoader;
-import app.specy.marsjs.JsMIPSIO;
 
 public class Main {
+
     public static void main(String[] args) {
         try {
             MIPS.initializeMIPS();
+            MIPS.setIo(null);
+            //TODO implement default IO
             MIPS mips = MIPS.fromSource("""
-                li $v0, 5
-                move $t0, $v0
-                move $t0, $v0
-                move $t0, $v0
-            
-                li $t1, 20
-                add $a0, $t0, $t1
+                    li $v0, 5
+                    syscall
+                    move $t0, $v0
+                    move $t0, $v0
+                    move $t0, $v0
+                    
+                    li $t1, 20
+                    add $a0, $t0, $t1
                     """);
             mips.assemble();
             mips.initialize(true);

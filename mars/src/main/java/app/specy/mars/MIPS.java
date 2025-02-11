@@ -3,6 +3,8 @@ package app.specy.mars;
 import java.util.List;
 import app.specy.mars.mips.fs.MIPSFileSystem;
 import app.specy.mars.mips.fs.MemoryFileSystem;
+import app.specy.mars.mips.hardware.Coprocessor0;
+import app.specy.mars.mips.hardware.Coprocessor1;
 import app.specy.mars.mips.hardware.RegisterFile;
 import app.specy.mars.mips.instructions.SyscallLoader;
 import app.specy.mars.mips.io.MIPSIO;
@@ -22,6 +24,7 @@ public class MIPS {
         Globals.instructionSet.setSyscallLoader(new SyscallLoader(io));
         SystemIO.setMIPSIO(io);
     }
+
 
     public MIPS(MIPSprogram main, List<MIPSprogram> programs) {
         this.programs = programs;
@@ -45,10 +48,15 @@ public class MIPS {
     }
 
     public ErrorList assemble() throws ProcessingException {
-        return this.main.assemble(this.programs, true);
+        ErrorList result = this.main.assemble(this.programs, true);
+        Globals.program = this.main;
+        return result;
     }
 
     public void initialize(boolean startAtMain) {
+        RegisterFile.resetRegisters();
+        Coprocessor0.resetRegisters();
+        Coprocessor1.resetRegisters();
         RegisterFile.initializeProgramCounter(startAtMain);
     }
 

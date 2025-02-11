@@ -5,6 +5,7 @@ import app.specy.mars.Globals;
 import app.specy.mars.MIPS;
 import app.specy.mars.ProcessingException;
 import app.specy.mars.mips.hardware.AddressErrorException;
+import app.specy.mars.mips.hardware.Coprocessor1;
 import app.specy.mars.mips.hardware.Register;
 import app.specy.mars.mips.hardware.RegisterFile;
 import org.teavm.jso.JSExport;
@@ -58,6 +59,15 @@ public class JsMips {
     @JSExport
     public boolean simulateWithLimit(int limit) throws ProcessingException {
         return this.main.simulate(limit);
+    }
+
+    @JSExport
+    public int[] getConditionFlags() {
+        int[] flags = new int[8];
+        for(int i = 0; i < 8; i++) {
+            flags[i] = Coprocessor1.getConditionFlag(i);
+        }
+        return flags;
     }
 
     @JSExport
@@ -125,7 +135,13 @@ public class JsMips {
         return !this.main.getProgram().getBackStepper().empty();
     }
 
-    @JSExport void setUndoEnabled(boolean enabled) {
+    @JSExport
+    public void setUndoSize(int size) {
+        Globals.maximumBacksteps = size;
+    }
+
+    @JSExport
+    void setUndoEnabled(boolean enabled) {
         this.main.getProgram().getBackStepper().setEnabled(enabled);
     }
 

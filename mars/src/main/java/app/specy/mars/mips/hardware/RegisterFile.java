@@ -47,7 +47,8 @@ public class RegisterFile {
    public static final int GLOBAL_POINTER_REGISTER = 28;
    public static final int STACK_POINTER_REGISTER = 29;
 
-   private static Register[] regFile = { new Register("$zero", 0, 0), new Register("$at", 1, 0),
+   private static Register[] regFile = {
+         new Register("$zero", 0, 0), new Register("$at", 1, 0),
          new Register("$v0", 2, 0), new Register("$v1", 3, 0),
          new Register("$a0", 4, 0), new Register("$a1", 5, 0),
          new Register("$a2", 6, 0), new Register("$a3", 7, 0),

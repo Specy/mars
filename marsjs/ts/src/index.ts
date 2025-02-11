@@ -174,6 +174,18 @@ export interface JsMips {
 
 
     /**
+     * Gets the 8 condition flags.
+     */
+    getConditionFlags(): number[];
+
+
+    /**
+     * Sets the size of the undo stack, must be called before assembling the program.
+     * @param size
+     */
+    setUndoSize(size: number): void;
+
+    /**
      * Undoes the last instruction executed.
      */
     undo(): void;
