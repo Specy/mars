@@ -197,6 +197,10 @@ public class Globals {
         }
     }
 
+    public static InstructionSet getInstructionSet() {
+        return instructionSet;
+    }
+
     // Read byte limit of Run I/O or MARS Messages text to buffer.
     private static int getMessageLimit() {
         return Globals.getConfigProperties().getIntegerValue(ConfigProperties.MessageLimit);

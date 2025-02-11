@@ -6,6 +6,8 @@ import app.specy.mars.mips.fs.MemoryFileSystem;
 import app.specy.mars.mips.hardware.Coprocessor0;
 import app.specy.mars.mips.hardware.Coprocessor1;
 import app.specy.mars.mips.hardware.RegisterFile;
+import app.specy.mars.mips.instructions.Instruction;
+import app.specy.mars.mips.instructions.InstructionSet;
 import app.specy.mars.mips.instructions.SyscallLoader;
 import app.specy.mars.mips.io.MIPSIO;
 import app.specy.mars.simulator.Simulator;
@@ -25,6 +27,10 @@ public class MIPS {
         SystemIO.setMIPSIO(io);
     }
 
+
+    public ProgramStatement getStatementAtAddress(int address) {
+        return this.main.getMachineStatement(address);
+    }
 
     public MIPS(MIPSprogram main, List<MIPSprogram> programs) {
         this.programs = programs;
@@ -76,6 +82,17 @@ public class MIPS {
 
     public MIPSprogram getProgram() {
         return this.main;
+    }
+
+    public static InstructionSet getInstructionSet() {
+        if(Globals.instructionSet == null) {
+            initializeMIPS();
+        }
+        return Globals.getInstructionSet();
+    }
+
+    public boolean hasTerminated(){
+        return this.getSimulator().hasTerminated();
     }
 
     public Simulator getSimulator() {

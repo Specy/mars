@@ -64,7 +64,7 @@ public class JsMips {
     @JSExport
     public int[] getConditionFlags() {
         int[] flags = new int[8];
-        for(int i = 0; i < 8; i++) {
+        for (int i = 0; i < 8; i++) {
             flags[i] = Coprocessor1.getConditionFlag(i);
         }
         return flags;
@@ -152,13 +152,23 @@ public class JsMips {
 
     @JSExport
     public int getCurrentStatementIndex() {
-        return this.main.getProgram().getMachineStatement(this.getProgramCounter()).getSourceLine();
+        return this.main.getStatementAtAddress(this.getProgramCounter()).getSourceLine();
     }
 
 
     @JSExport
     public JsProgramStatement getNextStatement() {
-        return new JsProgramStatement(this.main.getProgram().getMachineStatement(this.getProgramCounter()));
+        return new JsProgramStatement(this.main.getStatementAtAddress(this.getProgramCounter()));
+    }
+
+    @JSExport
+    public JsProgramStatement getStatementAtAddress(int address) {
+        return new JsProgramStatement(this.main.getStatementAtAddress(address));
+    }
+
+    @JSExport
+    public static JsInstruction[] getInstructionSet() {
+        return MIPS.getInstructionSet().getInstructionList().stream().map(JsInstruction::new).toArray(JsInstruction[]::new);
     }
 
     @JSExport

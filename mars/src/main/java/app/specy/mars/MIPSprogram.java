@@ -51,7 +51,7 @@ public class MIPSprogram {
    private boolean steppedExecution = false;
    private String currentFileName;
    private List<String> currentSourceList;
-   private ArrayList tokenList;
+   private List<TokenList> tokenList;
    private ArrayList parsedList;
    private List<ProgramStatement> machineList;
    private Map<Integer, ProgramStatement> machineListPCMap;
@@ -107,7 +107,7 @@ public class MIPSprogram {
     * @see TokenList
     **/
 
-   public ArrayList getTokenList() {
+   public List<TokenList> getTokenList() {
       return tokenList;
    }
 
@@ -253,11 +253,6 @@ public class MIPSprogram {
     * Prepares the given list of files for assembly. This involves
     * reading and tokenizing all the source files. There may be only one.
     * 
-    * @param filenames        ArrayList containing the source file name(s) in no
-    *                         particular order
-    * @param leadFilename     String containing name of source file that needs to
-    *                         go first and
-    *                         will be represented by "this" MIPSprogram object.
     * @param exceptionHandler String containing name of source file containing
     *                         exception
     *                         handler. This will be assembled first, even ahead of
@@ -396,8 +391,6 @@ public class MIPSprogram {
     * @param breakPoints int array of breakpoints (PC addresses). Can be null.
     * @param maxSteps    maximum number of instruction executions. Default -1 means
     *                    no maximum.
-    * @param a           the GUI component responsible for this call (GO normally).
-    *                    set to null if none.
     * @return true if execution completed and false otherwise
     * @throws ProcessingException Will throw exception if errors occured while
     *                             simulating.

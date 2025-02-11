@@ -97,10 +97,10 @@ public class Tokenizer {
     *         that represents a tokenized source statement from the MIPS program.
     **/
 
-   public ArrayList tokenize(MIPSprogram p, MIPSFileSystem files) throws ProcessingException {
+   public List<TokenList> tokenize(MIPSprogram p, MIPSFileSystem files) throws ProcessingException {
       sourceMIPSprogram = p;
       equivalents = new HashMap<String, String>(); // DPS 11-July-2012
-      ArrayList tokenList = new ArrayList();
+      List<TokenList> tokenList = new ArrayList<>();
       // ArrayList source = p.getSourceList();
       ArrayList<SourceLine> source = processIncludes(p, new HashMap<String, String>(), files); // DPS 9-Jan-2013
       p.setSourceLineList(source);
@@ -301,7 +301,6 @@ public class Tokenizer {
     * @param theLine          String containing source code
     * @param callerErrorList  errors will go into this list instead of tokenizer's
     *                         list.
-    * @param doEqvSubstitutse boolean param set true to perform .eqv substitutions,
     *                         else false
     * @return the generated token list for that line
     * 

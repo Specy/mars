@@ -1,6 +1,21 @@
 //@ts-ignore
-import {makeMipsfromSource as _makeMipsfromSource, initializeMIPS as _initializeMIPS} from './generated/mars'
+import {makeMipsfromSource as _makeMipsfromSource, initializeMIPS as _initializeMIPS, getInstructionSet as _getInstructionSet} from './generated/mars'
 
+
+export type JsInstructionToken = {
+    sourceLine: number;
+    sourceColumn: number;
+    originalSourceLine: number;
+    value: string;
+    type: string
+}
+
+export type JsInstruction = {
+    name: string;
+    example: string;
+    description: string;
+    tokens: JsInstructionToken[];
+}
 
 export type MIPSAssembleError = {
     isWarning: boolean
@@ -16,6 +31,14 @@ export type MIPSAssembleResult = {
     errors: MIPSAssembleError[]
 }
 
+
+export class MIPS {
+    public static makeMipsFromSource = makeMipsfromSource
+    public static initializeMIPS = initializeMIPS
+    public static getInstructionSet(){
+        return _getInstructionSet() as JsInstruction[]
+    }
+}
 
 
 /**
@@ -192,6 +215,13 @@ export interface JsMips {
 
 
     /**
+     * Gets the statement at the given address.
+     * @param address
+     */
+    getStatementAtAddress(address: number): JsProgramStatement;
+
+
+    /**
      * Checks if the simulation can be undone.
      * @returns True if the simulation can be undone, false otherwise.
      * */
@@ -312,7 +342,7 @@ export interface JsMips {
  * @param source The source code to assemble.
  * @returns A new `JsMips` object.
  */
-export function makeMipsfromSource(source: string): JsMips {
+function makeMipsfromSource(source: string): JsMips {
     initializeMIPS()
     return _makeMipsfromSource(source) as JsMips
 }

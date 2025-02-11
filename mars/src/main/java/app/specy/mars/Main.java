@@ -12,7 +12,6 @@ public class Main {
             //TODO implement default IO
             MIPS mips = MIPS.fromSource("""
                     li $v0, 5
-                    syscall
                     move $t0, $v0
                     move $t0, $v0
                     move $t0, $v0
