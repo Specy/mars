@@ -376,6 +376,14 @@ public class BackStepper {
             return pc;
         }
 
+        public int getParam1() {
+            return param1;
+        }
+
+        public int getParam2() {
+            return param2;
+        }
+
         // it is critical that BackStep object get its values by calling this method
         // rather than assigning to individual members, because of the technique used
         // to set its ps member (and possibly pc).

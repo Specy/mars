@@ -1,5 +1,6 @@
 package app.specy.marsjs;
 
+import app.specy.mars.ErrorList;
 import app.specy.mars.Globals;
 import app.specy.mars.MIPS;
 import app.specy.mars.ProcessingException;
@@ -40,8 +41,8 @@ public class JsMips {
     }
 
     @JSExport
-    public void assemble() throws ProcessingException {
-        this.main.assemble();
+    public JsCompilationResult assemble() throws ProcessingException {
+        return new JsCompilationResult(this.main.assemble());
     }
 
     @JSExport
@@ -80,11 +81,13 @@ public class JsMips {
     }
 
     @JSProperty
+    @JSExport
     public int getStackPointer() {
         return RegisterFile.getUserRegister("$sp").getValue();
     }
 
     @JSProperty
+    @JSExport
     public int getProgramCounter() {
         return RegisterFile.getProgramCounter();
     }
@@ -116,6 +119,21 @@ public class JsMips {
     }
 
 
+    @JSProperty
+    @JSExport
+    public boolean canUndo() {
+        return !this.main.getProgram().getBackStepper().empty();
+    }
+
+    @JSExport void setUndoEnabled(boolean enabled) {
+        this.main.getProgram().getBackStepper().setEnabled(enabled);
+    }
+
+    @JSExport
+    public void undo() {
+        this.main.getProgram().getBackStepper().backStep();
+    }
+
     @JSExport
     public int getCurrentStatementIndex() {
         return this.main.getProgram().getMachineStatement(this.getProgramCounter()).getSourceLine();
@@ -133,7 +151,8 @@ public class JsMips {
     }
 
     @JSProperty
-    public boolean hasTerminated() {
+    @JSExport
+    public boolean terminated() {
         return this.main.getSimulator().hasTerminated();
     }
 }

@@ -2,6 +2,7 @@ package app.specy.marsjs;
 
 import app.specy.mars.ProgramStatement;
 import org.teavm.jso.JSClass;
+import org.teavm.jso.JSExport;
 import org.teavm.jso.JSProperty;
 
 @JSClass
@@ -10,8 +11,6 @@ public class JsProgramStatement {
     private int sourceLine;
     private int address;
     private int binaryStatement;
-
-
     private String source;
     private String machineStatement;
 
@@ -25,26 +24,31 @@ public class JsProgramStatement {
     }
 
 
+    @JSExport
     @JSProperty
     public int getSourceLine() {
         return sourceLine;
     }
 
+    @JSExport
     @JSProperty
     public int getAddress() {
         return address;
     }
 
+    @JSExport
     @JSProperty
     public int getBinaryStatement() {
         return binaryStatement;
     }
 
+    @JSExport
     @JSProperty
     public String getSource() {
         return source;
     }
 
+    @JSExport
     @JSProperty
     public String getMachineStatement() {
         return machineStatement;

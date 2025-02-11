@@ -1,6 +1,23 @@
 //@ts-ignore
 import {makeMipsfromSource as _makeMipsfromSource, initializeMIPS as _initializeMIPS} from './generated/mars'
 
+
+export type MIPSAssembleError = {
+    isWarning: boolean
+    message: string
+    macroExpansionHistory: string
+    filename: string
+    lineNumber: number
+    columnNumber: number
+}
+
+export type MIPSAssembleResult = {
+    report: string
+    errors: MIPSAssembleError[]
+}
+
+
+
 /**
  * Represents a statement in the assembled program.
  */
@@ -52,6 +69,16 @@ export interface JsBackStep {
      * The action performed (e.g., register write, memory write).
      */
     readonly action: BackStepAction;
+
+    /**
+     * Information about the action
+     */
+    readonly param1: number;
+
+    /**
+     * Information about the action
+     */
+    readonly param2: number;
     /**
      * The program counter value before the action.
      */
@@ -131,7 +158,7 @@ export interface JsMips {
     /**
      * Assembles the program.
      */
-    assemble(): void;
+    assemble(): MIPSAssembleResult;
 
     /**
      * Initializes the simulator.
@@ -144,6 +171,26 @@ export interface JsMips {
      * @returns True if the execution is complete, false otherwise.
      */
     step(): boolean;
+
+
+    /**
+     * Undoes the last instruction executed.
+     */
+    undo(): void;
+
+
+    /**
+     * Checks if the simulation can be undone.
+     * @returns True if the simulation can be undone, false otherwise.
+     * */
+    canUndo: boolean;
+
+
+    /**
+     * Sets whether the undo feature is enabled.
+     * @param enabled True to enable the undo feature, false to disable it.
+     */
+    setUndoEnabled(enabled: boolean): void;
 
     /**
      * Simulates the program for a limited number of instructions.
@@ -185,13 +232,13 @@ export interface JsMips {
      * Gets the current value of the stack pointer.
      * @returns The value of the stack pointer.
      */
-    getStackPointer(): number;
+    stackPointer: number;
 
     /**
      * Gets the current value of the program counter.
      * @returns The value of the program counter.
      */
-    getProgramCounter(): number;
+    programCounter: number;
 
     /**
      * Gets the values of all registers.
@@ -243,7 +290,7 @@ export interface JsMips {
      * Checks if the simulation has terminated.
      * @returns True if the simulation has terminated, false otherwise.
      */
-    hasTerminated(): boolean;
+    terminated: boolean;
 }
 
 

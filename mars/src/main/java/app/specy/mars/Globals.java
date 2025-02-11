@@ -108,7 +108,7 @@ public class Globals {
     /**
      * Maximum number of back-step operations to buffer
      */
-    public static final int maximumBacksteps = getBackstepLimit();
+    public static int maximumBacksteps = getBackstepLimit();
     /**
      * MARS copyright years
      */
