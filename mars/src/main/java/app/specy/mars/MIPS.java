@@ -2,12 +2,14 @@ package app.specy.mars;
 
 import java.util.List;
 
+import app.specy.mars.assembler.SymbolTable;
 import app.specy.mars.assembler.TokenList;
 import app.specy.mars.mips.fs.MIPSFileSystem;
 import app.specy.mars.mips.fs.MemoryFileSystem;
 import app.specy.mars.mips.hardware.Coprocessor0;
 import app.specy.mars.mips.hardware.Coprocessor1;
 import app.specy.mars.mips.hardware.RegisterFile;
+import app.specy.mars.mips.hardware.Stack;
 import app.specy.mars.mips.instructions.Instruction;
 import app.specy.mars.mips.instructions.InstructionSet;
 import app.specy.mars.mips.instructions.SyscallLoader;
@@ -79,7 +81,20 @@ public class MIPS {
         Coprocessor0.resetRegisters();
         Coprocessor1.resetRegisters();
         RegisterFile.initializeProgramCounter(startAtMain);
+        Stack.clearCallStack();
         terminated = false;
+    }
+
+    public int[] getCallStack(){
+        int[] stack = new int[Stack.getCallStack().size()];
+        for(int i = 0; i < stack.length; i++) {
+            stack[i] = Stack.getCallStack().get(i);
+        }
+        return stack;
+    }
+
+    public String getLabelAtAddress(int address){
+        return this.main.getLocalSymbolTable().getSymbolGivenIntAddress(address).getName();
     }
 
     public boolean simulate(int[] breakpoints) throws ProcessingException {

@@ -79,6 +79,16 @@ public class JsMips {
     }
 
     @JSExport
+    public int[] getCallStack(){
+        return this.main.getCallStack();
+    }
+
+    @JSExport
+    public String getLabelAtAddress(int address){
+        return this.main.getLabelAtAddress(address);
+    }
+
+    @JSExport
     public int[] getConditionFlags() {
         int[] flags = new int[8];
         for (int i = 0; i < 8; i++) {

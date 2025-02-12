@@ -335,6 +335,21 @@ export interface JsMips {
     canUndo: boolean;
 
 
+
+    /**
+     * Gets the call stack.
+     * @returns An array of memory addresses representing the call stack.
+     */
+    getCallStack(): number[]
+
+
+    /**
+     * Gets the label at the given address.
+     * @param address The memory address.
+     * @returns The label at the given address, or null if no label is found.
+     */
+    getLabelAtAddress(address: number): string | null
+
     /**
      * Sets whether the undo feature is enabled.
      * @param enabled True to enable the undo feature, false to disable it.
