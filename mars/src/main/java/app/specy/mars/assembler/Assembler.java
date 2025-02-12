@@ -246,7 +246,7 @@ public class Assembler {
          // each ArrayList in tokenList consists of Token objects.
          ArrayList<SourceLine> sourceLineList = fileCurrentlyBeingAssembled.getSourceLineList();
          List<TokenList> tokenList = fileCurrentlyBeingAssembled.getTokenList();
-         ArrayList parsedList = fileCurrentlyBeingAssembled.createParsedList();
+         List<ProgramStatement> parsedList = fileCurrentlyBeingAssembled.createParsedList();
          // each file keeps its own macro definitions
          MacroPool macroPool = fileCurrentlyBeingAssembled.createMacroPool();
          // FIRST PASS OF ASSEMBLER VERIFIES SYNTAX, GENERATES SYMBOL TABLE,
@@ -310,7 +310,7 @@ public class Assembler {
          if (errors.errorLimitExceeded())
             break;
          this.fileCurrentlyBeingAssembled = (MIPSprogram) tokenizedProgramFiles.get(fileIndex);
-         ArrayList parsedList = fileCurrentlyBeingAssembled.getParsedList();
+         List<ProgramStatement> parsedList = fileCurrentlyBeingAssembled.getParsedList();
          ProgramStatement statement;
          for (int i = 0; i < parsedList.size(); i++) {
             statement = (ProgramStatement) parsedList.get(i);

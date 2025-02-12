@@ -1,6 +1,8 @@
 package app.specy.mars;
 
 import java.util.List;
+
+import app.specy.mars.assembler.TokenList;
 import app.specy.mars.mips.fs.MIPSFileSystem;
 import app.specy.mars.mips.fs.MemoryFileSystem;
 import app.specy.mars.mips.hardware.Coprocessor0;
@@ -18,7 +20,7 @@ public class MIPS {
     private List<MIPSprogram> programs;
     private MIPSprogram main;
     private static MIPSIO io;
-
+    private boolean terminated = false;
 
 
     public static void setIo(MIPSIO io) {
@@ -27,6 +29,19 @@ public class MIPS {
         SystemIO.setMIPSIO(io);
     }
 
+    public ProgramStatement getAddressFromSourceLine(int line) {
+        List<ProgramStatement> statements = this.main.getParsedList();
+        for(ProgramStatement statement : statements) {
+            if(statement.getSourceLine() == line) {
+                return statement;
+            }
+        }
+        return null;
+    }
+
+    public List<TokenList> getTokens(){
+        return this.main.getTokenList();
+    }
 
     public ProgramStatement getStatementAtAddress(int address) {
         return this.main.getMachineStatement(address);
@@ -64,20 +79,25 @@ public class MIPS {
         Coprocessor0.resetRegisters();
         Coprocessor1.resetRegisters();
         RegisterFile.initializeProgramCounter(startAtMain);
+        terminated = false;
     }
 
     public boolean simulate(int[] breakpoints) throws ProcessingException {
-        return this.main.simulate(breakpoints);
+        terminated = this.main.simulate(breakpoints);
+        return terminated;
     }
     public boolean simulate(int limit) throws ProcessingException {
-        return this.main.simulate(limit);
+        terminated = this.main.simulate(limit);
+        return terminated;
     }
     public boolean simulate(int[] breakpoints, int limit) throws ProcessingException {
-        return this.main.simulateFromPC(breakpoints, limit);
+        terminated = this.main.simulateFromPC(breakpoints, limit);
+        return terminated;
     }
 
     public boolean step() throws ProcessingException {
-        return this.main.simulateStepAtPC();
+        terminated = this.main.simulateStepAtPC();
+        return terminated;
     }
 
     public MIPSprogram getProgram() {
@@ -92,7 +112,7 @@ public class MIPS {
     }
 
     public boolean hasTerminated(){
-        return this.getSimulator().hasTerminated();
+        return terminated;
     }
 
     public Simulator getSimulator() {

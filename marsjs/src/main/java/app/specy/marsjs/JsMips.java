@@ -1,9 +1,9 @@
 package app.specy.marsjs;
 
-import app.specy.mars.ErrorList;
 import app.specy.mars.Globals;
 import app.specy.mars.MIPS;
 import app.specy.mars.ProcessingException;
+import app.specy.mars.ProgramStatement;
 import app.specy.mars.mips.hardware.AddressErrorException;
 import app.specy.mars.mips.hardware.Coprocessor1;
 import app.specy.mars.mips.hardware.Register;
@@ -12,7 +12,9 @@ import org.teavm.jso.JSExport;
 import org.teavm.jso.JSProperty;
 import org.teavm.jso.core.JSFunction;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 public class JsMips {
     private MIPS main;
@@ -43,7 +45,22 @@ public class JsMips {
 
     @JSExport
     public JsCompilationResult assemble() throws ProcessingException {
-        return new JsCompilationResult(this.main.assemble());
+        try{
+            return new JsCompilationResult(this.main.assemble());
+        }catch (ProcessingException e) {
+            return new JsCompilationResult(e.errors());
+        }
+    }
+
+    @JSExport
+    public JsMipsTokenizedLine[] getTokenizedLines() {
+        return this.main.getTokens().stream().map((v) -> {
+            JsMipsToken[] tokens = new JsMipsToken[v.size()];
+            for (int i = 0; i < v.size(); i++) {
+                tokens[i] = new JsMipsToken(v.get(i));
+            }
+            return new JsMipsTokenizedLine(v.getProcessedLine(), tokens);
+        }).toArray(JsMipsTokenizedLine[]::new);
     }
 
     @JSExport
@@ -167,6 +184,15 @@ public class JsMips {
     }
 
     @JSExport
+    public JsProgramStatement getStatementAtSourceLine(int line) {
+        ProgramStatement s = this.main.getAddressFromSourceLine(line);
+        if(s == null) {
+            return null;
+        }
+        return new JsProgramStatement(s);
+    }
+
+    @JSExport
     public static JsInstruction[] getInstructionSet() {
         return MIPS.getInstructionSet().getInstructionList().stream().map(JsInstruction::new).toArray(JsInstruction[]::new);
     }
@@ -179,6 +205,6 @@ public class JsMips {
     @JSProperty
     @JSExport
     public boolean terminated() {
-        return this.main.getSimulator().hasTerminated();
+        return this.main.hasTerminated();
     }
 }

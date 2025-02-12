@@ -21,7 +21,9 @@ public class Main {
                     """);
             mips.assemble();
             mips.initialize(true);
+            System.out.println(mips.hasTerminated());
             mips.simulate(1000);
+            System.out.println(mips.hasTerminated());
             System.out.println(RegisterFile.getUserRegister("$a0").getValue());
         } catch (Exception e) {
             e.printStackTrace();

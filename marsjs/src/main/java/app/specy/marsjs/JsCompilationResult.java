@@ -82,6 +82,13 @@ public class JsCompilationResult {
 
     @JSExport
     @JSProperty
+    public boolean hasErrors() {
+        return !errors.isEmpty();
+    }
+
+
+    @JSExport
+    @JSProperty
     public JsCompilationError[] getErrors() {
         return errors.toArray(new JsCompilationError[0]);
     }

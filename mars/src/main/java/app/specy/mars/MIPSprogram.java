@@ -52,7 +52,7 @@ public class MIPSprogram {
    private String currentFileName;
    private List<String> currentSourceList;
    private List<TokenList> tokenList;
-   private ArrayList parsedList;
+   private List<ProgramStatement> parsedList;
    private List<ProgramStatement> machineList;
    private Map<Integer, ProgramStatement> machineListPCMap;
    private BackStepper backStepper;
@@ -130,8 +130,8 @@ public class MIPSprogram {
     * @see ProgramStatement
     **/
 
-   public ArrayList createParsedList() {
-      parsedList = new ArrayList();
+   public List<ProgramStatement> createParsedList() {
+      parsedList = new ArrayList<>();
       return parsedList;
    }
 
@@ -144,7 +144,7 @@ public class MIPSprogram {
     * @see ProgramStatement
     **/
 
-   public ArrayList getParsedList() {
+   public List<ProgramStatement> getParsedList() {
       return parsedList;
    }
 
@@ -222,7 +222,6 @@ public class MIPSprogram {
     * It is GUI responsibility to assure that source edits are written to file
     * when user selects compile or run/step options.
     * 
-    * @param file String containing name of MIPS source code file.
     * @throws ProcessingException Will throw exception if there is any problem
     *                             reading the file.
     **/

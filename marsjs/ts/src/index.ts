@@ -10,11 +10,120 @@ export type JsInstructionToken = {
     type: string
 }
 
+/*
+public abstract int openFile(String filename, int flags, boolean append) throws MIPSIOError;
+    public abstract void closeFile(int fileDescriptor) throws MIPSIOError;
+    public abstract void writeFile(int fileDescriptor, byte[] buffer) throws MIPSIOError;
+    public abstract int readFile(int fileDescriptor, byte[] destination, int length) throws MIPSIOError;
+
+
+    // 0 ---> meaning Yes
+    // 1 ---> meaning No
+    // 2 ---> meaning Cancel
+    public abstract int confirm(String message);
+
+    public abstract String inputDialog(String message);
+
+     *  ERROR_MESSAGE = 0
+     *  INFORMATION_MESSAGE = 1
+     *  WARNING_MESSAGE = 2
+     *  QUESTION_MESSAGE = 3
+public abstract void outputDialog(String message, int type);
+
+public abstract double askDouble(String message);
+
+public abstract float askFloat(String message);
+
+public abstract int askInt(String message);
+
+public abstract String askString(String message);
+
+public abstract double readDouble();
+
+public abstract float readFloat();
+
+public abstract int readInt();
+
+public abstract String readString();
+
+public abstract char readChar();
+
+public abstract void logLine(String message);
+
+public abstract void log(String message);
+
+public abstract void printChar(char c);
+
+public abstract void printDouble(double d);
+
+public abstract void printFloat(float f);
+
+public abstract void printInt(int i);
+
+public abstract void printString(String l);
+
+
+public abstract void sleep(int milliseconds);
+
+public abstract void stdIn(byte[] buffer, int length);
+
+public abstract void stdOut(byte[] buffer);
+
+public abstract void stdErr(byte[] buffer);
+ */
+
+export enum DialogType {
+    ERROR_MESSAGE = 0,
+    INFORMATION_MESSAGE = 1,
+    WARNING_MESSAGE = 2,
+    QUESTION_MESSAGE = 3
+}
+
+export enum ConfirmResult {
+    YES = 0,
+    NO = 1,
+    CANCEL = 2
+}
+
+export type HandlerMap = {
+    openFile: {in: [filename: string, flags: number, append: boolean], out: number}
+    closeFile: {in: [fileDescriptor: number], out: void}
+    writeFile: {in: [fileDescriptor: number, buffer: number[]], out: void}
+    readFile: {in: [fileDescriptor: number, destination: number[], length: number], out: number}
+    confirm: {in: [message: string], out: ConfirmResult}
+    inputDialog: {in: [message: string], out: string}
+    outputDialog: {in: [message: string, type: DialogType], out: void}
+    askDouble: {in: [message: string], out: number}
+    askFloat: {in: [message: string], out: number}
+    askInt: {in: [message: string], out: number}
+    askString: {in: [message: string], out: string}
+    readDouble: {in: [], out: number}
+    readFloat: {in: [], out: number}
+    readInt: {in: [], out: number}
+    readString: {in: [], out: string}
+    readChar: {in: [], out: string}
+    logLine: {in: [message: string], out: void}
+    log: {in: [message: string], out: void}
+    printChar: {in: [c: string], out: void}
+    printDouble: {in: [d: number], out: void}
+    printFloat: {in: [f: number], out: void}
+    printInt: {in: [i: number], out: void}
+    printString: {in: [l: string], out: void}
+    sleep: {in: [milliseconds: number], out: void}
+    stdIn: {in: [buffer: number[], length: number], out: void}
+    stdOut: {in: [buffer: number[]], out: void}
+}
+
 export type JsInstruction = {
     name: string;
     example: string;
     description: string;
     tokens: JsInstructionToken[];
+}
+
+export type MipsTokenizedLine = {
+    line: string;
+    tokens: JsInstructionToken[]
 }
 
 export type MIPSAssembleError = {
@@ -29,6 +138,7 @@ export type MIPSAssembleError = {
 export type MIPSAssembleResult = {
     report: string
     errors: MIPSAssembleError[]
+    hasErrors: boolean
 }
 
 
@@ -145,34 +255,24 @@ export type RegisterName =
     | '$fp'
     | '$ra';
 
-type HandlerName =
-    "openFile"
-    | "closeFile"
-    | "writeFile"
-    | "readFile"
-    | "confirm"
-    | "inputDialog"
-    | "outputDialog"
-    | "askInt"
-    | "askDouble"
-    | "askFloat"
-    | "askString"
-    | "readInt"
-    | "readDouble"
-    | "readFloat"
-    | "readString"
-    | "readChar"
-    | "logLine"
-    | "log"
-    | "printChar"
-    | "printDouble"
-    | "printFloat"
-    | "printInt"
-    | "printString"
-    | "stdIn"
-    | "stdOut"
-    | "stdErr"
+type HandlerName = keyof HandlerMap
 
+
+export type HandlerMapFns = {
+    [K in HandlerName]: (...args: HandlerMap[K]['in']) => HandlerMap[K]['out']
+}
+
+export function registerHandlers(mips: JsMips, handlers: HandlerMapFns) {
+    for (const [name, handler] of Object.entries(handlers)) {
+        mips.registerHandler(name as HandlerName, handler as (...args: HandlerMap[HandlerName]['in']) => HandlerMap[HandlerName]['out'])
+    }
+}
+
+export function unimplementedHandler(name: HandlerName) {
+    return function () {
+        throw new Error(`Handler ${name} is not implemented`)
+    }
+}
 
 /**
  * Interface for interacting with a MIPS simulator.
@@ -220,7 +320,14 @@ export interface JsMips {
      */
     getStatementAtAddress(address: number): JsProgramStatement;
 
+    /**
+     * Gets the statement at the given source line.
+     * @param line
+     */
+    getStatementAtSourceLine(line: number): JsProgramStatement;
 
+
+    getTokenizedLines(): MipsTokenizedLine[]
     /**
      * Checks if the simulation can be undone.
      * @returns True if the simulation can be undone, false otherwise.
@@ -268,7 +375,7 @@ export interface JsMips {
      * @param name The name of the event or condition.
      * @param handler The handler function to be called when the event occurs. The function signature depends on the event name.
      */
-    registerHandler(name: HandlerName, handler: Function): void;
+    registerHandler<T extends HandlerName>(name: T, handler: (...args: HandlerMap[T]['in']) => HandlerMap[T]['out']): void;
 
     /**
      * Gets the current value of the stack pointer.
