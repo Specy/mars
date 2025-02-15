@@ -175,6 +175,12 @@ export interface JsProgramStatement {
      * The machine code representation of the instruction.
      */
     readonly machineStatement: string;
+
+
+    /**
+     * The assembly representation of the instruction.
+     */
+    readonly assemblyStatement: string;
 }
 
 /**
@@ -341,6 +347,17 @@ export interface JsMips {
      * @returns An array of memory addresses representing the call stack.
      */
     getCallStack(): number[]
+
+
+
+    /**
+     * Gets the compiled statements.
+     * @returns An array of `JsProgramStatement` objects representing the compiled program.
+     */
+    getCompiledStatements(): JsProgramStatement[]
+
+
+    getParsedStatements(): JsInstructionToken[]
 
 
     /**

@@ -49,6 +49,14 @@ public class MIPS {
         return this.main.getMachineStatement(address);
     }
 
+    public List<ProgramStatement> getParsedStatements() {
+        return this.main.getParsedList();
+    }
+
+    public List<ProgramStatement> getStatements() {
+        return this.main.getMachineList();
+    }
+
     public MIPS(MIPSprogram main, List<MIPSprogram> programs) {
         this.programs = programs;
         this.main = main;

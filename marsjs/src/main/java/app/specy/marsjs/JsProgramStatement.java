@@ -12,6 +12,7 @@ public class JsProgramStatement {
     private int address;
     private int binaryStatement;
     private String source;
+    private String assemblyStatement;
     private String machineStatement;
 
 
@@ -20,6 +21,7 @@ public class JsProgramStatement {
         this.address = programStatement.getAddress();
         this.binaryStatement = programStatement.getBinaryStatement();
         this.source = programStatement.getSource();
+        this.assemblyStatement = programStatement.getPrintableBasicAssemblyStatement();
         this.machineStatement = programStatement.getMachineStatement();
     }
 
@@ -53,4 +55,11 @@ public class JsProgramStatement {
     public String getMachineStatement() {
         return machineStatement;
     }
+
+    @JSExport
+    @JSProperty
+    public String getAssemblyStatement() {
+        return assemblyStatement;
+    }
+
 }

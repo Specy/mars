@@ -194,6 +194,26 @@ public class JsMips {
     }
 
     @JSExport
+    public JsProgramStatement[] getCompiledStatements() {
+        List<ProgramStatement> statements = this.main.getStatements();
+        JsProgramStatement[] jsStatements = new JsProgramStatement[statements.size()];
+        for (int i = 0; i < statements.size(); i++) {
+            jsStatements[i] = new JsProgramStatement(statements.get(i));
+        }
+        return jsStatements;
+    }
+
+    @JSExport
+    public JsProgramStatement[] getParsedStatements() {
+        List<ProgramStatement> statements = this.main.getParsedStatements();
+        JsProgramStatement[] jsStatements = new JsProgramStatement[statements.size()];
+        for (int i = 0; i < statements.size(); i++) {
+            jsStatements[i] = new JsProgramStatement(statements.get(i));
+        }
+        return jsStatements;
+    }
+
+    @JSExport
     public JsProgramStatement getStatementAtSourceLine(int line) {
         ProgramStatement s = this.main.getAddressFromSourceLine(line);
         if(s == null) {
