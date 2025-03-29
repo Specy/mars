@@ -5,24 +5,50 @@ import java.util.List;
 
 public class Stack {
 
-    static List<Integer> callStack = new ArrayList<Integer>();
 
-    public static void pushCallStack(int pc) {
-        callStack.add(pc);
+    static List<StackFrame> callStack = new ArrayList<>();
+
+    public static void pushCallStack(int pc, int ra, int sp, int fp, int[] registers) {
+        callStack.add(new StackFrame(pc, ra, sp, fp, registers));
     }
 
-    public static int popCallStack() {
+
+    public static void pushCallStack(StackFrame frame) {
+        callStack.add(frame);
+    }
+
+    public static StackFrame popCallStack() {
         if (callStack.isEmpty()) {
-            return -1;
+            return null;
         }
         return callStack.remove(callStack.size() - 1);
     }
+
+    public static void popUntilIncluding(int pc){
+        boolean hasPc = false;
+        for(StackFrame frame : callStack){
+            if(frame.getPC() == pc){
+                hasPc = true;
+                break;
+            }
+        }
+        if(!hasPc){
+            return;
+        }
+        while (!callStack.isEmpty() && callStack.get(callStack.size() - 1).getPC() != pc){
+            callStack.remove(callStack.size() - 1);
+        }
+        if(!callStack.isEmpty() && callStack.get(callStack.size() - 1).getPC() == pc){
+            callStack.remove(callStack.size() - 1);
+        }
+    }
+
 
     public static void clearCallStack() {
         callStack.clear();
     }
 
-    public static List<Integer> getCallStack() {
+    public static List<StackFrame> getCallStack() {
         return callStack;
     }
 }

@@ -79,8 +79,12 @@ public class JsMips {
     }
 
     @JSExport
-    public int[] getCallStack(){
-        return this.main.getCallStack();
+    public JsStackFrame[] getCallStack(){
+        List<JsStackFrame> stack = new ArrayList<>();
+        for(int i = 0; i < this.main.getCallStack().length; i++) {
+            stack.add(new JsStackFrame(this.main.getCallStack()[i]));
+        }
+        return stack.toArray(new JsStackFrame[0]);
     }
 
     @JSExport

@@ -10,6 +10,8 @@ export type JsInstructionToken = {
     type: string
 }
 
+
+
 /*
 public abstract int openFile(String filename, int flags, boolean append) throws MIPSIOError;
     public abstract void closeFile(int fileDescriptor) throws MIPSIOError;
@@ -150,6 +152,28 @@ export class MIPS {
     }
 }
 
+export type JsMipsStackFrame = {
+    /**
+     * The program counter value at the moment the stack frame was created.
+     */
+    pc: number;
+    /**
+     * The address of the target instruction.
+     */
+    toAddress: number;
+    /**
+     * The stack pointer value at the moment the stack frame was created.
+     */
+    sp: number;
+    /**
+     * The frame pointer value at the moment the stack frame was created.
+     */
+    fp: number;
+    /**
+     * The values of all registers at the moment the stack frame was created.
+     */
+    registers: number[];
+}
 
 /**
  * Represents a statement in the assembled program.
@@ -346,7 +370,7 @@ export interface JsMips {
      * Gets the call stack.
      * @returns An array of memory addresses representing the call stack.
      */
-    getCallStack(): number[]
+    getCallStack(): JsMipsStackFrame[]
 
 
 

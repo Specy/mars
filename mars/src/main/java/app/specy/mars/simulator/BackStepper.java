@@ -171,6 +171,7 @@ public class BackStepper {
                             RegisterFile.updateRegister(step.param1, step.param2);
                             break;
                         case PC_RESTORE:
+                            Stack.popUntilIncluding(step.param1);
                             RegisterFile.setProgramCounter(step.param1);
                             break;
                         case COPROC0_REGISTER_RESTORE:

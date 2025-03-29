@@ -184,6 +184,15 @@ public class RegisterFile {
       return regFile;
    }
 
+   public static int[] getRegistersValues() {
+      int[] values = new int[regFile.length];
+      for (int i = 0; i < regFile.length; i++) {
+         values[i] = regFile[i].getValue();
+      }
+      return values;
+   }
+
+
    /**
     * Get register object corresponding to given name. If no match, return null.
     * 
@@ -275,6 +284,14 @@ public class RegisterFile {
 
    public static int getProgramCounter() {
       return programCounter.getValue();
+   }
+
+   public static Register getStackPointerRegister(){
+        return regFile[STACK_POINTER_REGISTER];
+   }
+
+   public static Register getFramePointerRegister(){
+        return regFile[30];
    }
 
    /**

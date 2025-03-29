@@ -6,10 +6,7 @@ import app.specy.mars.assembler.SymbolTable;
 import app.specy.mars.assembler.TokenList;
 import app.specy.mars.mips.fs.MIPSFileSystem;
 import app.specy.mars.mips.fs.MemoryFileSystem;
-import app.specy.mars.mips.hardware.Coprocessor0;
-import app.specy.mars.mips.hardware.Coprocessor1;
-import app.specy.mars.mips.hardware.RegisterFile;
-import app.specy.mars.mips.hardware.Stack;
+import app.specy.mars.mips.hardware.*;
 import app.specy.mars.mips.instructions.Instruction;
 import app.specy.mars.mips.instructions.InstructionSet;
 import app.specy.mars.mips.instructions.SyscallLoader;
@@ -93,8 +90,8 @@ public class MIPS {
         terminated = false;
     }
 
-    public int[] getCallStack(){
-        int[] stack = new int[Stack.getCallStack().size()];
+    public StackFrame[] getCallStack(){
+        StackFrame[] stack = new StackFrame[Stack.getCallStack().size()];
         for(int i = 0; i < stack.length; i++) {
             stack[i] = Stack.getCallStack().get(i);
         }
