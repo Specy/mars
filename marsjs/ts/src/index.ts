@@ -384,6 +384,11 @@ export interface JsMips {
     getParsedStatements(): JsInstructionToken[]
 
 
+    getHi(): number;
+
+    getLo(): number;
+
+
     /**
      * Gets the label at the given address.
      * @param address The memory address.

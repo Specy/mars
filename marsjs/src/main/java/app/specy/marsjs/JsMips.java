@@ -138,6 +138,17 @@ public class JsMips {
         return Arrays.stream(RegisterFile.getRegisters()).mapToInt(Register::getValue).toArray();
     }
 
+
+    @JSExport
+    public int getHi(){
+        return RegisterFile.getValue(33);
+    }
+
+    @JSExport
+    public int getLo(){
+        return RegisterFile.getValue(34);
+    }
+
     @JSExport
     public JsBackStep[] getUndoStack() {
         return Arrays.stream(this.main.getProgram().getBackStepper().getBackStepsStack().getStack()).map(JsBackStep::new).toArray(JsBackStep[]::new);
