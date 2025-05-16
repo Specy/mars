@@ -1,6 +1,12 @@
-# MipsJs
+# Mips-js
 
 A JavaScript library for simulating MIPS assembly code.  This library provides an interface to assemble, execute, and inspect the state of a MIPS simulator.  It's built by compiling the [mars](https://github.com/dpetersanderson/MARS) simulator with [TeaVM](https://teavm.org/), with some glue code on top to make it easier to use.
+It is part of a family of javascript assembly interpreters/simulators:
+
+- MIPS: [git repo](https://github.com/Specy/mars),  [npm package](https://www.npmjs.com/package/@specy/mips)
+- RISC-V: [git repo](https://github.com/Specy/rars), [npm package](https://www.npmjs.com/package/@specy/risc-v)
+- X86: [git repo](https://github.com/Specy/x86-js), [npm package](https://www.npmjs.com/package/@specy/x86)
+- M68K: [git repo](https://github.com/Specy/s68k), [npm package](https://www.npmjs.com/package/@specy/s68k)
 
 ## Installation
 

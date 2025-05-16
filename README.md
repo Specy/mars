@@ -15,7 +15,15 @@ If you are looking for the original MARS, you can find it [here](https://dpeters
 If you are looking for the mips docs, you can find it [here](https://dpetersanderson.github.io/Help/MarsHelpIntro.html)
 
 
-# MarsJS
+# Mips-js
+This is a Typescript implementation of a MIPS simulator made by compiling the [original MARS editor](https://github.com/dpetersanderson/MARS) to Javascript.
+It is part of a family of javascript assembly interpreters/simulators:
+
+- MIPS: [git repo](https://github.com/Specy/mars),  [npm package](https://www.npmjs.com/package/@specy/mips)
+- RISC-V: [git repo](https://github.com/Specy/rars), [npm package](https://www.npmjs.com/package/@specy/risc-v)
+- X86: [git repo](https://github.com/Specy/x86-js), [npm package](https://www.npmjs.com/package/@specy/x86)
+- M68K: [git repo](https://github.com/Specy/s68k), [npm package](https://www.npmjs.com/package/@specy/s68k)
+
 
 ## Installation
 
