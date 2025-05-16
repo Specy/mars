@@ -38,19 +38,19 @@ const mipsSimulator: JsMips = makeMipsfromSource(sourceCode);
 mipsSimulator.assemble();
 mipsSimulator.initialize(true); // Start at 'main'
 
-while (!mipsSimulator.hasTerminated()) {
+while (!mipsSimulator.terminated) {
   mipsSimulator.step();
 }
 
-const pc = mipsSimulator.getProgramCounter();
+const pc = mipsSimulator.programCounter;
 const v0 = mipsSimulator.getRegisterValue('$v0');
 
 console.log(`Program Counter: ${pc}`);
 console.log(`$v0: ${v0}`);
 
 // Accessing memory:
-const data = mipsSimulator.readMemoryBytes(0x1000, 4); // Read 4 bytes from address 0x1000
-mipsSimulator.setMemoryBytes(0x1000, [0x01, 0x02, 0x03, 0x04]); // Write 4 bytes to address 0x1000
+const data = mipsSimulator.readMemoryBytes(0xffff0000, 4); // Read 4 bytes from address 0x1000
+mipsSimulator.setMemoryBytes(0xffff0000, [0x01, 0x02, 0x03, 0x04]); // Write 4 bytes to address 0x1000
 
 // Registering Handlers (for syscalls and other events):
 mipsSimulator.registerHandler("printInt", (value: number) => {
