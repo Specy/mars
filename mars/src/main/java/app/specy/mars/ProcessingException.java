@@ -76,6 +76,9 @@ public class ProcessingException extends Exception {
     * @param m  a String containing specialized error message
     **/
    public ProcessingException(ProgramStatement ps, String m) {
+      super(new ErrorMessage(ps, "Runtime exception at " +
+              Binary.intToHexString(RegisterFile.getProgramCounter() - Instruction.INSTRUCTION_LENGTH) +
+              ": " + m).toString());
       errs = new ErrorList();
       errs.add(new ErrorMessage(ps, "Runtime exception at " +
             Binary.intToHexString(RegisterFile.getProgramCounter() - Instruction.INSTRUCTION_LENGTH) +

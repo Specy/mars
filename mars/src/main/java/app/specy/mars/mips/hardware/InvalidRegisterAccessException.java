@@ -46,10 +46,7 @@ public class InvalidRegisterAccessException extends Exception {
    * 
    **/
   public InvalidRegisterAccessException() {
-  }
-
-  public String toString() {
-    return "Invalid register access, attempt to access double precision register using an odd register name, (e.g. $f1, $f23)";
+    super("Invalid register access, attempt to access double precision register using an odd register name, (e.g. $f1, $f23)");
   }
 
 }
