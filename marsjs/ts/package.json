@@ -1,6 +1,6 @@
 {
   "name": "@specy/mips",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "keywords": [
     "mips",
     "mars",
@@ -13,7 +13,9 @@
   ],
   "description": "The MARS mips interpreter in JS",
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts"
+    "build": "tsup src/index.ts --format esm,cjs --dts",
+    "build:all": "cd ../../ && mvn clean install && cd rarsjs/ts && npm run build"
+
   },
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

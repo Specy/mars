@@ -138,4 +138,8 @@ public class ProcessingException extends Exception {
       return errs;
    }
 
+   public String toString(){
+      return errs.toString();
+   }
+
 }
