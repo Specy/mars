@@ -73,4 +73,8 @@ public class AddressErrorException extends Exception {
       return type;
    }
 
+   public String toString(){
+      return super.toString();
+   }
+
 }

@@ -319,7 +319,26 @@ public class ErrorMessage {
       return sourceMIPSprogram.getLocalMacroPool().getExpansionHistory();
    }
 
-} // ErrorMessage
+   public String generateReport(boolean isWarning){
+      ErrorMessage m = this;
+      String reportLine = "";
+      if ((isWarning && m.isWarning()) || (!isWarning && !m.isWarning())) {
+         reportLine = ((isWarning) ? "Warning" : "Error") + " in ";
+         if (m.getFilename().length() > 0)
+            reportLine = reportLine + (m.getFilename());
+         if (m.getLine() > 0)
+            reportLine = reportLine + " line " + m.getMacroExpansionHistory() + m.getLine();
+         if (m.getPosition() > 0)
+            reportLine = reportLine + " column " + m.getPosition();
+      }
+      return reportLine + ": " + m.getMessage();
+   }
+
+   public String toString() {
+      return generateReport(false);
+   }
+
+}
 
 
 
