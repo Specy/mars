@@ -112,10 +112,25 @@ jobs:
         working-directory: marsjs/ts
         run: npm test
 
+      - name: Check OIDC availability
+        run: |
+          echo "node $(node --version), npm $(npm --version)"
+          if [[ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+            echo "OIDC token endpoint IS available to this job"
+          else
+            echo "OIDC token endpoint is NOT available - id-token: write is not in effect"
+          fi
+          echo "npm registry: $(npm config get registry)"
+          echo "userconfig:   ${NPM_CONFIG_USERCONFIG:-<unset>}"
+          if [[ -n "${NPM_CONFIG_USERCONFIG:-}" && -f "$NPM_CONFIG_USERCONFIG" ]]; then
+            echo "--- userconfig contents (token values masked by npm/actions) ---"
+            cat "$NPM_CONFIG_USERCONFIG"
+          fi
+
       # No NODE_AUTH_TOKEN: npm detects the OIDC environment and exchanges it
       # for a short-lived, run-scoped credential. Provenance attestations are
       # generated automatically for public packages, so --provenance is not
       # passed explicitly.
       - name: Publish to npm
         working-directory: marsjs/ts
-        run: npm publish --access public
+        run: npm publish --access public --loglevel verbose
