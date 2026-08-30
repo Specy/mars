@@ -8,10 +8,16 @@ import app.specy.mars.mips.hardware.AddressErrorException;
 import app.specy.mars.mips.hardware.Coprocessor1;
 import app.specy.mars.mips.hardware.Register;
 import app.specy.mars.mips.hardware.RegisterFile;
+import org.teavm.jso.JSExceptions;
 import org.teavm.jso.JSExport;
+import org.teavm.jso.JSObject;
 import org.teavm.jso.JSProperty;
+import org.teavm.jso.core.JSBoolean;
 import org.teavm.jso.core.JSFunction;
+import org.teavm.jso.core.JSPromise;
+import org.teavm.jso.function.JSConsumer;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -68,14 +74,76 @@ public class JsMips {
         this.main.initialize(startAtMain);
     }
 
-    @JSExport
-    public boolean step() throws ProcessingException {
-        return this.main.step();
+
+    /*
+     * Simulation runs inside a single long-lived TeaVM coroutine ("green thread"), so that a
+     * JS IO handler returning a promise can suspend the Java stack and resume once it settles.
+     *
+     * The coroutine is started once and then parked on a JS promise between tasks. Waking it
+     * costs a microtask, whereas starting a fresh coroutine per call (Thread.start, which is what
+     * JSPromise.callAsync does) goes through setTimeout and costs a full macrotask - about 1ms
+     * per step, which is far too slow for instruction-level stepping.
+     */
+    private static final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
+    private static JSConsumer<JSObject> unpark;
+    private static boolean workerStarted;
+
+    private interface Body {
+        boolean run() throws ProcessingException;
+    }
+
+    private static void workerLoop() {
+        while (true) {
+            while (!tasks.isEmpty()) {
+                Runnable task = tasks.poll();
+                try {
+                    task.run();
+                } catch (Throwable ignored) {
+                    // run() already settles the promise for every outcome, so there is nowhere
+                    // left to report this; swallow it rather than killing the worker.
+                }
+            }
+            JSPromise<JSObject> parked = JSPromise.create((resolve, reject) -> unpark = resolve);
+            parked.await();
+            unpark = null;
+        }
+    }
+
+    private static void submit(Runnable task) {
+        tasks.add(task);
+        if (!workerStarted) {
+            workerStarted = true;
+            JSPromise.runAsync(JsMips::workerLoop);
+            return;
+        }
+        JSConsumer<JSObject> resume = unpark;
+        if (resume != null) {
+            unpark = null;
+            resume.accept(null);
+        }
+    }
+
+    private static JSPromise<JSBoolean> run(Body body) {
+        return JSPromise.create((resolve, reject) -> submit(() -> {
+            boolean result;
+            try {
+                result = body.run();
+            } catch (Throwable t) {
+                reject.accept(JSExceptions.getJSException(t));
+                return;
+            }
+            resolve.accept(JSBoolean.valueOf(result));
+        }));
     }
 
     @JSExport
-    public boolean simulateWithLimit(int limit) throws ProcessingException {
-        return this.main.simulate(limit);
+    public JSPromise<JSBoolean> step() {
+        return run(() -> this.main.step());
+    }
+
+    @JSExport
+    public JSPromise<JSBoolean> simulateWithLimit(int limit) {
+        return run(() -> this.main.simulate(limit));
     }
 
     @JSExport
@@ -102,13 +170,13 @@ public class JsMips {
     }
 
     @JSExport
-    public boolean simulateWithBreakpoints(int[] breakpoints) throws ProcessingException {
-        return this.main.simulate(breakpoints);
+    public JSPromise<JSBoolean> simulateWithBreakpoints(int[] breakpoints) {
+        return run(() -> this.main.simulate(breakpoints));
     }
 
     @JSExport
-    public boolean simulateWithBreakpointsAndLimit(int[] breakpoints, int limit) throws ProcessingException {
-        return this.main.simulate(breakpoints, limit);
+    public JSPromise<JSBoolean> simulateWithBreakpointsAndLimit(int[] breakpoints, int limit) {
+        return run(() -> this.main.simulate(breakpoints, limit));
     }
 
     @JSExport

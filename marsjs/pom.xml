@@ -14,7 +14,7 @@
 
     <properties>
         <java.version>11</java.version>
-        <teavm.version>0.13.1</teavm.version>
+        <teavm.version>0.15.0</teavm.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 

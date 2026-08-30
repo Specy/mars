@@ -91,7 +91,7 @@ export type HandlerMap = {
     openFile: {in: [filename: string, flags: number, append: boolean], out: number}
     closeFile: {in: [fileDescriptor: number], out: void}
     writeFile: {in: [fileDescriptor: number, buffer: number[]], out: void}
-    readFile: {in: [fileDescriptor: number, destination: number[], length: number], out: number}
+    readFile: {in: [fileDescriptor: number, destination: number[], length: number], out: [readOrEof: number, buffer: number[]]}
     confirm: {in: [message: string], out: ConfirmResult}
     inputDialog: {in: [message: string], out: string}
     outputDialog: {in: [message: string, type: DialogType], out: void}
@@ -114,6 +114,7 @@ export type HandlerMap = {
     sleep: {in: [milliseconds: number], out: void}
     stdIn: {in: [buffer: number[], length: number], out: void}
     stdOut: {in: [buffer: number[]], out: void}
+    stdErr: {in: [buffer: number[]], out: void}
 }
 
 export type JsInstruction = {
@@ -288,13 +289,19 @@ export type RegisterName =
 type HandlerName = keyof HandlerMap
 
 
+/**
+ * A handler may return its result directly, or a promise of it. When a handler returns a promise
+ * the simulation suspends until it settles, so IO can be backed by an async API (prompting the
+ * user, reading a file, awaiting a worker) without blocking the event loop. If the promise
+ * rejects, the pending `step`/`simulate*` call rejects too.
+ */
 export type HandlerMapFns = {
-    [K in HandlerName]: (...args: HandlerMap[K]['in']) => HandlerMap[K]['out']
+    [K in HandlerName]: (...args: HandlerMap[K]['in']) => HandlerMap[K]['out'] | Promise<HandlerMap[K]['out']>
 }
 
 export function registerHandlers(mips: JsMips, handlers: HandlerMapFns) {
     for (const [name, handler] of Object.entries(handlers)) {
-        mips.registerHandler(name as HandlerName, handler as (...args: HandlerMap[HandlerName]['in']) => HandlerMap[HandlerName]['out'])
+        mips.registerHandler(name as HandlerName, handler as (...args: HandlerMap[HandlerName]['in']) => HandlerMap[HandlerName]['out'] | Promise<HandlerMap[HandlerName]['out']>)
     }
 }
 
@@ -321,9 +328,12 @@ export interface JsMips {
 
     /**
      * Executes a single instruction.
-     * @returns True if the execution is complete, false otherwise.
+     *
+     * Resolves to true if the execution is complete, false otherwise. The promise settles on a
+     * microtask unless an IO handler returned a promise, in which case it settles once that
+     * handler and the rest of the instruction have finished.
      */
-    step(): boolean;
+    step(): Promise<boolean>;
 
 
     /**
@@ -405,24 +415,24 @@ export interface JsMips {
     /**
      * Simulates the program for a limited number of instructions.
      * @param limit The maximum number of instructions to execute.
-     * @returns True if the execution is complete, false otherwise.
+     * @returns A promise resolving to true if the execution is complete, false otherwise.
      */
-    simulateWithLimit(limit: number): boolean;
+    simulateWithLimit(limit: number): Promise<boolean>;
 
     /**
      * Simulates the program until a breakpoint is reached.
      * @param breakpoints An array of memory addresses where the simulation should pause.
-     * @returns True if the execution is complete, false otherwise.
+     * @returns A promise resolving to true if the execution is complete, false otherwise.
      */
-    simulateWithBreakpoints(breakpoints: number[]): boolean;
+    simulateWithBreakpoints(breakpoints: number[]): Promise<boolean>;
 
     /**
      * Simulates the program with both breakpoints and a limit.
      * @param breakpoints An array of memory addresses where the simulation should pause.
      * @param limit The maximum number of instructions to execute.
-     * @returns True if the execution is complete, false otherwise.
+     * @returns A promise resolving to true if the execution is complete, false otherwise.
      */
-    simulateWithBreakpointsAndLimit(breakpoints: number[], limit: number): boolean;
+    simulateWithBreakpointsAndLimit(breakpoints: number[], limit: number): Promise<boolean>;
 
     /**
      * Gets the value of a register.
@@ -436,7 +446,7 @@ export interface JsMips {
      * @param name The name of the event or condition.
      * @param handler The handler function to be called when the event occurs. The function signature depends on the event name.
      */
-    registerHandler<T extends HandlerName>(name: T, handler: (...args: HandlerMap[T]['in']) => HandlerMap[T]['out']): void;
+    registerHandler<T extends HandlerName>(name: T, handler: (...args: HandlerMap[T]['in']) => HandlerMap[T]['out'] | Promise<HandlerMap[T]['out']>): void;
 
     /**
      * Gets the current value of the stack pointer.

@@ -39,7 +39,7 @@ mipsSimulator.assemble();
 mipsSimulator.initialize(true); // Start at 'main'
 
 while (!mipsSimulator.terminated) {
-  mipsSimulator.step();
+  await mipsSimulator.step();
 }
 
 const pc = mipsSimulator.programCounter;
@@ -57,6 +57,12 @@ mipsSimulator.registerHandler("printInt", (value: number) => {
     console.log("printInt syscall called with:", value);
 });
 
+// Handlers may also be async: returning a promise suspends the simulation until it settles,
+// so IO can be backed by an async API without blocking the event loop.
+mipsSimulator.registerHandler("readInt", async () => {
+    return await promptUserForANumber();
+});
+
 // Accessing the undo stack:
 const undoStack = mipsSimulator.getUndoStack();
 undoStack.forEach(step => {
@@ -68,18 +74,37 @@ undoStack.forEach(step => {
 
 // Simulating with breakpoints:
 const breakpoints = [0x00400004, 0x00400008]; // Example breakpoint addresses
-mipsSimulator.simulateWithBreakpoints(breakpoints);
+await mipsSimulator.simulateWithBreakpoints(breakpoints);
 
 //Simulating with a limit
 const limit = 100
-mipsSimulator.simulateWithLimit(limit);
+await mipsSimulator.simulateWithLimit(limit);
 
 //Simulating with breakpoints and a limit
-mipsSimulator.simulateWithBreakpointsAndLimit(breakpoints, limit);
+await mipsSimulator.simulateWithBreakpointsAndLimit(breakpoints, limit);
 
 //Setting Register Values:
 mipsSimulator.setRegisterValue("$t0", 42);
 ```
+
+## IO handlers
+
+Every syscall that needs to talk to the outside world goes through a handler you register. A
+handler can return its result directly, or return a promise of it:
+
+```typescript
+mipsSimulator.registerHandler("readInt", () => 42);                  // synchronous
+mipsSimulator.registerHandler("readString", () => fetchLine());      // asynchronous
+```
+
+When a handler returns a promise the simulation suspends at that instruction and resumes once the
+promise settles, so nothing has to be shoehorned into a synchronous API. Because of that,
+`step`, `simulateWithLimit`, `simulateWithBreakpoints` and `simulateWithBreakpointsAndLimit` all
+return a promise. Everything else on `JsMips` (registers, memory, statements, the undo stack)
+stays synchronous.
+
+If a handler's promise rejects, the pending `step`/`simulate*` call rejects as well, with the
+rejection reason in the message.
 
 ## API
 
@@ -93,12 +118,12 @@ Creates a new `JsMips` instance from MIPS assembly source code.
 
 *   `assemble()`: Assembles the program.
 *   `initialize(startAtMain: boolean)`: Initializes the simulator. If `startAtMain` is true, execution begins at the `main` label; otherwise, it starts at the first instruction.
-*   `step(): boolean`: Executes a single instruction. Returns `true` if the execution is complete, `false` otherwise.
-*   `simulateWithLimit(limit: number): boolean`: Simulates the program for a maximum of `limit` instructions. Returns `true` if the execution is complete, `false` otherwise.
-*   `simulateWithBreakpoints(breakpoints: number[]): boolean`: Simulates the program until a breakpoint is reached.  `breakpoints` is an array of memory addresses. Returns `true` if the execution is complete, `false` otherwise.
-*   `simulateWithBreakpointsAndLimit(breakpoints: number[], limit: number): boolean`: Simulates the program until a breakpoint is reached or the limit is reached. Returns `true` if the execution is complete, `false` otherwise.
+*   `step(): Promise<boolean>`: Executes a single instruction. Resolves to `true` if the execution is complete, `false` otherwise.
+*   `simulateWithLimit(limit: number): Promise<boolean>`: Simulates the program for a maximum of `limit` instructions. Resolves to `true` if the execution is complete, `false` otherwise.
+*   `simulateWithBreakpoints(breakpoints: number[]): Promise<boolean>`: Simulates the program until a breakpoint is reached.  `breakpoints` is an array of memory addresses. Resolves to `true` if the execution is complete, `false` otherwise.
+*   `simulateWithBreakpointsAndLimit(breakpoints: number[], limit: number): Promise<boolean>`: Simulates the program until a breakpoint is reached or the limit is reached. Resolves to `true` if the execution is complete, `false` otherwise.
 *   `getRegisterValue(register: RegisterName): number`: Returns the value of the specified register.
-*   `registerHandler(name: HandlerName, handler: Function): void`: Registers a handler function for a specific event (e.g., syscalls).  See the `HandlerName` type for possible event names.
+*   `registerHandler(name: HandlerName, handler: Function): void`: Registers a handler function for a specific event (e.g., syscalls).  See the `HandlerName` type for possible event names. A handler may return its result directly or return a promise of it, see [IO handlers](#io-handlers).
 *   `getStackPointer(): number`: Returns the current value of the stack pointer.
 *   `getProgramCounter(): number`: Returns the current value of the program counter.
 *   `getRegistersValues(): number[]`: Returns an array of all register values.
