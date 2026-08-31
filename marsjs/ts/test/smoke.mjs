@@ -39,6 +39,21 @@ loop:
     syscall
 `
 
+const WARNINGS_ONLY_SOURCE = `
+    .data
+val: .byte 300
+    .text
+main:
+    li $v0, 10
+    syscall
+`
+
+const REAL_ERROR_SOURCE = `
+    .text
+main:
+    bogus_instruction
+`
+
 // Every handler must be registered; the ones this program cannot reach throw
 // so an unexpected syscall fails the test instead of silently doing nothing.
 const HANDLER_NAMES = [
@@ -47,6 +62,25 @@ const HANDLER_NAMES = [
     'readFloat', 'readInt', 'readString', 'readChar', 'logLine', 'log', 'printChar',
     'printDouble', 'printFloat', 'printInt', 'printString', 'sleep', 'stdIn', 'stdOut', 'stdErr',
 ]
+
+const warningProgram = MIPS.makeMipsFromSource(WARNINGS_ONLY_SOURCE)
+const warningsOnly = warningProgram.assemble()
+assert.equal(warningsOnly.hasErrors, false, `warnings-only assembly failed: ${warningsOnly.report}`)
+assert.equal(warningsOnly.hasWarnings, true, 'warnings-only assembly should report warnings')
+assert.ok(warningsOnly.errors.length >= 1, 'warnings-only assembly should include at least one diagnostic')
+assert.equal(warningsOnly.errors.every(error => error.isWarning === true), true, 'every warnings-only diagnostic should expose isWarning: true')
+
+warningProgram.initialize(true)
+let warningSteps = 0
+while (!warningProgram.terminated && warningSteps < 10) {
+    await warningProgram.step()
+    warningSteps++
+}
+assert.ok(warningProgram.terminated, 'warnings-only program should remain runnable')
+
+const realError = MIPS.makeMipsFromSource(REAL_ERROR_SOURCE).assemble()
+assert.equal(realError.hasErrors, true, 'invalid assembly should report an error')
+assert.ok(realError.errors.some(error => error.isWarning === false), 'invalid assembly should expose isWarning: false')
 
 const output = []
 const mips = MIPS.makeMipsFromSource(SOURCE)
@@ -59,7 +93,8 @@ registerHandlers(mips, {
 })
 
 const assembled = mips.assemble()
-assert.equal(assembled.hasErrors, false, `assembly failed: ${JSON.stringify(assembled.errors)}`)
+assert.equal(assembled.hasErrors, false, `assembly failed: ${assembled.report}`)
+assert.equal(assembled.hasWarnings, false, `clean assembly produced warnings: ${assembled.report}`)
 
 mips.initialize(true)
 

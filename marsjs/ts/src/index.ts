@@ -141,7 +141,10 @@ export type MIPSAssembleError = {
 export type MIPSAssembleResult = {
     report: string
     errors: MIPSAssembleError[]
+    /** True only when at least one diagnostic is a real error; warnings alone leave the assembled program runnable. */
     hasErrors: boolean
+    /** True when at least one diagnostic is a warning. */
+    hasWarnings: boolean
 }
 
 
