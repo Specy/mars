@@ -106,6 +106,48 @@ stays synchronous.
 If a handler's promise rejects, the pending `step`/`simulate*` call rejects as well, with the
 rejection reason in the message.
 
+Program time is a handler too, so a run can be given a clock of its own: `sleep` answers syscall 32
+and `time` answers syscall 30. A live run resolves `sleep` on a timer and returns `Date.now()` from
+`time`; a scripted run can settle `sleep` immediately, advance a virtual clock by the requested
+milliseconds and return that clock instead, which keeps elapsed-time output reproducible.
+
+## Memory observers
+
+A memory-mapped device - a framebuffer, a keyboard register - is modelled by observing the memory
+the program reads and writes:
+
+```ts
+// Every write in a framebuffer: (address, length, value), with the width of the store in bytes.
+const frame = mipsSimulator.addMemoryWriteObserver(0x10010000, 0x10012ffc, (address, length, value) => {
+    screen.markDirty(address)
+})
+
+// One memory-mapped register: reads and writes, either of which may be null.
+const receiver = mipsSimulator.addMemoryAccessObserver(
+    0xffff0004,
+    () => keyboard.consumeCharacter(),
+    null
+)
+
+mipsSimulator.removeMemoryObserver(frame)
+mipsSimulator.removeMemoryObservers()
+```
+
+*   Addresses must be word-aligned, `endAddress` is inclusive and covers its whole word, and a range
+    may not cross `0x80000000`; a registration that breaks any of these throws.
+*   Handlers run synchronously inside the instruction that caused the access, so they must be cheap
+    and must not write back into their own range. A returned promise is ignored, unlike an IO
+    handler's.
+*   An observer is notified *after* the access, with the value the program read or stored. A
+    register whose value is consumed by reading it must therefore be reloaded from the handler,
+    with `setPeripheralWord`, for the next read.
+*   Observers live on the simulator's memory, which assembling and initializing only clear the
+    contents of, so a registration survives `assemble()` and `initialize()` and - like a registered
+    IO handler - is shared by every `JsMips` instance. Notifications start once a program has been
+    assembled.
+*   `undo()` restores memory through the same stores, so an observed range reports the restored
+    values as ordinary writes and a device that follows notifications alone stays in step.
+
 ## API
 
 ### `makeMipsfromSource(source: string): JsMips`
@@ -128,8 +170,14 @@ Creates a new `JsMips` instance from MIPS assembly source code.
 *   `getProgramCounter(): number`: Returns the current value of the program counter.
 *   `getRegistersValues(): number[]`: Returns an array of all register values.
 *   `getUndoStack(): JsBackStep[]`: Returns the undo stack, which contains information about previous simulation steps.
-*   `readMemoryBytes(address: number, length: number): number[]`: Reads `length` bytes from memory starting at `address`.
-*   `setMemoryBytes(address: number, bytes: number[]): void`: Writes `bytes` to memory starting at `address`.
+*   `readMemoryBytes(address: number, length: number): number[]`: Reads `length` bytes from memory starting at `address`. Notifies no memory observer: inspecting memory from the host is not the program reading it.
+*   `setMemoryBytes(address: number, bytes: number[]): void`: Writes `bytes` to memory starting at `address`, the way the program does: write observers are notified and, while undo is enabled, an undo step is recorded per byte.
+*   `setPeripheralWord(address: number, value: number): void`: Writes one word-aligned word as a peripheral would, notifying no observer and recording no undo step. See [memory observers](#memory-observers).
+*   `addMemoryWriteObserver(startAddress: number, endAddress: number, handler): number`: Observes every write in an address range. See [memory observers](#memory-observers).
+*   `addMemoryAccessObserver(address: number, onRead, onWrite): number`: Observes reads and writes of one word. See [memory observers](#memory-observers).
+*   `removeMemoryObserver(handle: number): void`: Removes one registration.
+*   `removeMemoryObservers(): void`: Removes every registration.
+*   `countMemoryObservers(): number`: The number of live registrations.
 *   `getCurrentStatementIndex(): number`: Returns the index of the current statement in the assembled program.
 *   `getNextStatement(): JsProgramStatement`: Returns the next `JsProgramStatement` to be executed.
 *   `setRegisterValue(register: RegisterName, value: number): void`: Sets the value of the specified register.

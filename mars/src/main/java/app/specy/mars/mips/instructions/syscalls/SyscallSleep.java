@@ -33,30 +33,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
 /**
- * Service to read a character from input console into $a0.
+ * Service to suspend the program for the number of milliseconds in $a0.
  *
  */
 
-public class SyscallTime extends AbstractSyscall {
+public class SyscallSleep extends AbstractSyscall {
    /**
-    * Build an instance of the Read Char syscall. Default service number
-    * is 12 and name is "ReadChar".
+    * Build an instance of the Sleep syscall. Default service number
+    * is 32 and name is "Sleep".
     */
-   public SyscallTime() {
-      super(30, "Time");
+   public SyscallSleep() {
+      super(32, "Sleep");
    }
 
    /**
-    * Performs syscall function to place current system time into $a0 (low order 32
-    * bits)
-    * and $a1 (high order 32 bits).
+    * Performs syscall function to pause the program for $a0 milliseconds. The wait itself belongs
+    * to the IO environment: the host cannot block here, so the handler is what suspends the
+    * simulation and resumes it when the time has passed.
     */
    public void simulate(ProgramStatement statement) throws ProcessingException {
-      // Program time comes from the IO environment rather than java.util.Date so that a scripted
-      // run can answer with a virtual clock and stay reproducible.
-      long value = (long) SystemIO.time();
-      RegisterFile.updateRegister(4, Binary.lowOrderLongToInt(value)); // $a0
-      RegisterFile.updateRegister(5, Binary.highOrderLongToInt(value)); // $a1
+      SystemIO.sleep(RegisterFile.getValue(4)); // $a0
    }
 
 }
