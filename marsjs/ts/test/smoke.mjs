@@ -117,7 +117,11 @@ assert.ok(MIPS.getInstructionSet().length > 0, 'instruction set should not be em
 // Peripherals: the framebuffer range, a memory-mapped register and program time. The program
 // stores three words into static data, reads the register word back, sleeps and asks for the time.
 const FRAMEBUFFER = 0x10010000
-const REGISTER = 0xffff0000 | 0
+// Deliberately the unsigned form: a memory-mapped address does not fit a positive int, and the
+// wrapper has to accept it anyway or an observer registered from it could never match an access.
+const REGISTER = 0xffff0000
+// What the guest holds, and so what an observer is handed.
+const SIGNED_REGISTER = 0xffff0000 | 0
 
 const PERIPHERAL_SOURCE = `
     .text
@@ -197,8 +201,8 @@ assert.deepEqual(writes, [
     // A byte store reports only the byte it wrote, not the whole register.
     [FRAMEBUFFER + 8, 1, 0x12],
 ], 'framebuffer writes should be reported in order, with the width of each store')
-assert.deepEqual(registerReads, [[REGISTER, 0x41]], 'the register read should report the preloaded value')
-assert.deepEqual(registerWrites, [[REGISTER, 7]], 'the register write should report the stored value')
+assert.deepEqual(registerReads, [[SIGNED_REGISTER, 0x41]], 'the register read should report the preloaded value')
+assert.deepEqual(registerWrites, [[SIGNED_REGISTER, 7]], 'the register write should report the stored value')
 
 // readMemoryBytes is host inspection, so it must not look like a program read.
 assert.deepEqual(Array.from(peripherals.readMemoryBytes(REGISTER, 1)), [7])

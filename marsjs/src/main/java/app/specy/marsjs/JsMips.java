@@ -241,8 +241,18 @@ public class JsMips {
     }
 
     @JSExport
-    public void setPeripheralWord(int address, int value) throws AddressErrorException {
-        Globals.memory.setRawWordNoNotify(address, value);
+    public void setPeripheralWord(double address, int value) throws AddressErrorException {
+        Globals.memory.setRawWordNoNotify(toAddress(address), value);
+    }
+
+    /**
+     * Addresses cross from JavaScript as plain numbers, and one above 2^31-1 - which every
+     * memory-mapped register is - stays positive instead of wrapping into a negative int.
+     * Normalizing here means 0xffff0000 and 0xffff0000 | 0 name the same word, rather than the
+     * unsigned form quietly registering an observer that can never match an access.
+     */
+    private static int toAddress(double address) {
+        return (int) (long) address;
     }
 
     /*
@@ -256,17 +266,17 @@ public class JsMips {
     private static int nextMemoryObserverHandle = 1;
 
     @JSExport
-    public int addMemoryWriteObserver(int startAddress, int endAddress, JSFunction handler)
+    public int addMemoryWriteObserver(double startAddress, double endAddress, JSFunction handler)
             throws AddressErrorException {
-        return addMemoryObserver(
-                JsMemoryObserver.overRange(nextMemoryObserverHandle, startAddress, endAddress, handler));
+        return addMemoryObserver(JsMemoryObserver.overRange(nextMemoryObserverHandle,
+                toAddress(startAddress), toAddress(endAddress), handler));
     }
 
     @JSExport
-    public int addMemoryAccessObserver(int address, JSFunction onRead, JSFunction onWrite)
+    public int addMemoryAccessObserver(double address, JSFunction onRead, JSFunction onWrite)
             throws AddressErrorException {
         return addMemoryObserver(
-                JsMemoryObserver.atWord(nextMemoryObserverHandle, address, onRead, onWrite));
+                JsMemoryObserver.atWord(nextMemoryObserverHandle, toAddress(address), onRead, onWrite));
     }
 
     @JSExport

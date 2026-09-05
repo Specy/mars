@@ -135,13 +135,18 @@ export type HandlerMap = {
  * `length` is the width of the access in bytes (4, 2 or 1) and `value` is what the program stored,
  * so a byte or halfword store reports only the bytes it touched; a peripheral that mirrors whole
  * words should re-read the containing word with `readMemoryBytes` rather than trust `value`.
+ *
+ * Both `address` and `value` are signed 32 bit integers, as the guest holds them: the register at
+ * `0xffff000c` arrives as `-65524`, and a pixel word with its high bit set arrives negative too.
+ * Apply `>>> 0` wherever the unsigned form is wanted.
  */
 export type MemoryWriteObserver = (address: number, length: number, value: number) => void
 
 /**
- * Notified after a read or a write of one observed word. `value` is the value the program read or
- * stored; on a read it is what memory held *before* the observer ran, so a register whose value is
- * consumed by reading it must be reloaded from the handler for the next read.
+ * Notified after a read or a write of one observed word, with the same signed 32 bit numbers as
+ * `MemoryWriteObserver`. `value` is the value the program read or stored; on a read it is what
+ * memory held *before* the observer ran, so a register whose value is consumed by reading it must
+ * be reloaded from the handler for the next read.
  */
 export type MemoryAccessObserver = (address: number, value: number) => void
 
@@ -534,7 +539,8 @@ export interface JsMips {
      * because the write is not the program acting. This is how a device model refreshes a
      * memory-mapped register - a ready bit, a pending character - without feeding its own observer
      * or consuming undo history.
-     * @param address The word address, which must be word-aligned.
+     * @param address The word address, which must be word-aligned. Either form of a high address
+     * is accepted: `0xffff0000` and `0xffff0000 | 0` name the same word.
      * @param value The 32 bit value to store, raw, without byte-order adjustment.
      */
     setPeripheralWord(address: number, value: number): void;
@@ -544,7 +550,8 @@ export interface JsMips {
      *
      * Both addresses must be word-aligned, `endAddress` is inclusive and covers its whole word, and
      * the range may not cross 0x80000000 (split it in two registrations instead); a range that
-     * breaks any of these throws. The handler runs synchronously inside the storing instruction, so
+     * breaks any of these throws. Either form of a high address is accepted: `0xffff0000` and
+     * `0xffff0000 | 0` name the same word. The handler runs synchronously inside the storing instruction, so
      * it must be cheap and must not write back into its own range; a returned promise is ignored.
      *
      * Observers live on the simulator's memory, which assembling and initializing only clear the

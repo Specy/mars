@@ -134,7 +134,11 @@ mipsSimulator.removeMemoryObservers()
 ```
 
 *   Addresses must be word-aligned, `endAddress` is inclusive and covers its whole word, and a range
-    may not cross `0x80000000`; a registration that breaks any of these throws.
+    may not cross `0x80000000`; a registration that breaks any of these throws. Either form of a
+    high address is accepted: `0xffff0000` and `0xffff0000 | 0` name the same word.
+*   Handlers are given signed 32 bit integers, as the guest holds them: the register at
+    `0xffff000c` arrives as `-65524`, and a pixel word with its high bit set arrives negative.
+    Apply `>>> 0` wherever the unsigned form is wanted.
 *   Handlers run synchronously inside the instruction that caused the access, so they must be cheap
     and must not write back into their own range. A returned promise is ignored, unlike an IO
     handler's.
