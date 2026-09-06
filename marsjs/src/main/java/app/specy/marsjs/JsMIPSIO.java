@@ -261,7 +261,12 @@ public class JsMIPSIO extends MIPSIO {
 
     @Override
     public void sleep(int milliseconds) {
+        callHandler("sleep", JSNumber.valueOf(milliseconds));
+    }
 
+    @Override
+    public double time() {
+        return callDoubleHandler("time");
     }
 
     @Override

@@ -97,6 +97,7 @@ public class SyscallLoader {
       add(new SyscallReadInt());
       add(new SyscallReadString());
       add(new SyscallSbrk());
+      add(new SyscallSleep());
       add(new SyscallTime());
 
       syscallList = processSyscallNumberOverrides(syscallList);
