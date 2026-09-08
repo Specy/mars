@@ -1,13 +1,13 @@
 package app.specy.mars.mips.fs;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import app.specy.mars.MIPSFile;
 
 public class MemoryFileSystem extends MIPSFileSystem {
-    private Map<String, String> files = new HashMap<String, String>();
+    private final Map<String, String> files = new LinkedHashMap<String, String>();
 
     public String read(String path) {
         String f = files.get(path);

@@ -1,10 +1,11 @@
 package app.specy.mars;
 
 import app.specy.mars.assembler.SourceLine;
+import app.specy.mars.assembler.SourceLocation;
 
-import java.util.regex.Pattern;
-import java.util.regex.Matcher;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
 /*
 Copyright (c) 2003-2012,  Pete Sanderson and Kenneth Vollmar
 
@@ -43,11 +44,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 public class ErrorMessage {
    private boolean isWarning; // allow for warnings too (added Nov 2006)
-   private String filename; // name of source file (added Oct 2006)
-   private int line; // line in source code where error detected
-   private int position; // position in source line where error detected
+   private String sourcePath;
+   private int sourceLine;
+   private int sourceColumn;
    private String message;
-   private String macroExpansionHistory;
+   private List<SourceLocation> macroExpansionTrace;
 
    /**
     * Constant to indicate this message is warning not error
@@ -123,11 +124,11 @@ public class ErrorMessage {
    public ErrorMessage(boolean isWarning, String filename, int line, int position, String message,
          String macroExpansionHistory) {
       this.isWarning = isWarning;
-      this.filename = filename;
-      this.line = line;
-      this.position = position;
+      this.sourcePath = filename;
+      this.sourceLine = line;
+      this.sourceColumn = normalizeColumn(line, position);
       this.message = message;
-      this.macroExpansionHistory = macroExpansionHistory;
+      this.macroExpansionTrace = new ArrayList<>();
    }
 
    /**
@@ -171,21 +172,22 @@ public class ErrorMessage {
    public ErrorMessage(boolean isWarning, MIPSprogram sourceMIPSprogram, int line, int position, String message) {
       this.isWarning = isWarning;
       if (sourceMIPSprogram == null) {
-         this.filename = "";
-         this.line = line;
+         this.sourcePath = "";
+         this.sourceLine = line;
       } else {
-         if (sourceMIPSprogram.getSourceLineList() == null) {
-            this.filename = sourceMIPSprogram.getFilename();
-            this.line = line;
+         if (sourceMIPSprogram.getSourceLineList() == null || line < 1
+               || line > sourceMIPSprogram.getSourceLineList().size()) {
+            this.sourcePath = sourceMIPSprogram.getFilename();
+            this.sourceLine = line;
          } else {
             SourceLine sourceLine = sourceMIPSprogram.getSourceLineList().get(line - 1);
-            this.filename = sourceLine.getFilename();
-            this.line = sourceLine.getLineNumber();
+            this.sourcePath = sourceLine.getSourcePath();
+            this.sourceLine = sourceLine.getLineNumber();
          }
       }
-      this.position = position;
+      this.sourceColumn = normalizeColumn(this.sourceLine, position);
       this.message = message;
-      this.macroExpansionHistory = getExpansionHistory(sourceMIPSprogram);
+      this.macroExpansionTrace = getExpansionTrace(sourceMIPSprogram);
    }
 
    /**
@@ -198,54 +200,17 @@ public class ErrorMessage {
    // Added January 2013
 
    public ErrorMessage(ProgramStatement statement, String message) {
-      this.isWarning = ERROR;
-      this.filename = (statement.getSourceMIPSprogram() == null)
-            ? ""
-            : statement.getSourceMIPSprogram().getFilename();
-      this.position = 0;
-      this.message = message;
-      // Somewhere along the way we lose the macro history, but can
-      // normally recreate it here. The line number for macro use (in the
-      // expansion) comes with the ProgramStatement.getSourceLine().
-      // The line number for the macro definition comes embedded in
-      // the source code from ProgramStatement.getSource(), which is
-      // displayed in the Text Segment display. It would previously
-      // have had the macro definition line prepended in brackets,
-      // e.g. "<13> syscall # finished". So I'll extract that
-      // bracketed number here and include it in the error message.
-      // Looks bass-ackwards, but to get the line numbers to display correctly
-      // for runtime error occurring in macro expansion (expansion->definition), need
-      // to assign to the opposite variables.
-      ArrayList<Integer> defineLine = parseMacroHistory(statement.getSource());
-      if (defineLine.size() == 0) {
-         this.line = statement.getSourceLine();
-         this.macroExpansionHistory = "";
-      } else {
-         this.line = defineLine.get(0);
-         this.macroExpansionHistory = "" + statement.getSourceLine();
-      }
+      this(statement, 0, message);
    }
 
-   private ArrayList<Integer> parseMacroHistory(String string) {
-      Pattern pattern = Pattern.compile("<\\d+>");
-      Matcher matcher = pattern.matcher(string);
-      String verify = new String(string).trim();
-      ArrayList<Integer> macroHistory = new ArrayList<Integer>();
-      while (matcher.find()) {
-         String match = matcher.group();
-         if (verify.indexOf(match) == 0) {
-            try {
-               int line = Integer.parseInt(match.substring(1, match.length() - 1));
-               macroHistory.add(line);
-            } catch (NumberFormatException e) {
-               break;
-            }
-            verify = verify.substring(match.length()).trim();
-         } else {
-            break;
-         }
-      }
-      return macroHistory;
+   /** Creates a diagnostic at the original source location of a statement. */
+   public ErrorMessage(ProgramStatement statement, int position, String message) {
+      this.isWarning = ERROR;
+      this.sourcePath = statement.getSourcePath();
+      this.sourceLine = statement.getSourceLine();
+      this.sourceColumn = normalizeColumn(this.sourceLine, position);
+      this.message = message;
+      this.macroExpansionTrace = statement.getMacroExpansionTrace();
    }
 
    /**
@@ -256,7 +221,11 @@ public class ErrorMessage {
    // Added October 2006
 
    public String getFilename() {
-      return filename;
+      return sourcePath;
+   }
+
+   public String getSourcePath() {
+      return sourcePath;
    }
 
    /**
@@ -266,7 +235,7 @@ public class ErrorMessage {
     */
 
    public int getLine() {
-      return line;
+      return sourceLine;
    }
 
    /**
@@ -276,7 +245,7 @@ public class ErrorMessage {
     */
 
    public int getPosition() {
-      return position;
+      return sourceColumn;
    }
 
    /**
@@ -307,16 +276,23 @@ public class ErrorMessage {
    // Method added by Mohammad Sekavat Dec 2012
 
    public String getMacroExpansionHistory() {
-      if (macroExpansionHistory == null || macroExpansionHistory.length() == 0)
+      if (macroExpansionTrace == null || macroExpansionTrace.isEmpty())
          return "";
-      return macroExpansionHistory + "->";
+      return macroExpansionTrace.stream().map(SourceLocation::toString).collect(Collectors.joining(" -> "));
    }
 
-   // Added by Mohammad Sekavat Dec 2012
-   private static String getExpansionHistory(MIPSprogram sourceMIPSprogram) {
+   public List<SourceLocation> getMacroExpansionTrace() {
+      return new ArrayList<>(macroExpansionTrace);
+   }
+
+   private static List<SourceLocation> getExpansionTrace(MIPSprogram sourceMIPSprogram) {
       if (sourceMIPSprogram == null || sourceMIPSprogram.getLocalMacroPool() == null)
-         return "";
-      return sourceMIPSprogram.getLocalMacroPool().getExpansionHistory();
+         return new ArrayList<>();
+      return sourceMIPSprogram.getLocalMacroPool().getExpansionTrace();
+   }
+
+   private static int normalizeColumn(int sourceLine, int sourceColumn) {
+      return sourceLine > 0 && sourceColumn < 1 ? 1 : sourceColumn;
    }
 
    public String generateReport(boolean isWarning){
@@ -324,12 +300,14 @@ public class ErrorMessage {
       String reportLine = "";
       if ((isWarning && m.isWarning()) || (!isWarning && !m.isWarning())) {
          reportLine = ((isWarning) ? "Warning" : "Error") + " in ";
-         if (m.getFilename().length() > 0)
-            reportLine = reportLine + (m.getFilename());
+         if (m.getSourcePath().length() > 0)
+            reportLine = reportLine + (m.getSourcePath());
          if (m.getLine() > 0)
-            reportLine = reportLine + " line " + m.getMacroExpansionHistory() + m.getLine();
+            reportLine = reportLine + " line " + m.getLine();
          if (m.getPosition() > 0)
             reportLine = reportLine + " column " + m.getPosition();
+         if (!m.getMacroExpansionHistory().isEmpty())
+            reportLine = reportLine + " (macro expansion: " + m.getMacroExpansionHistory() + ")";
       }
       return reportLine + ": " + m.getMessage();
    }
@@ -339,6 +317,3 @@ public class ErrorMessage {
    }
 
 }
-
-
-

@@ -1,7 +1,6 @@
 package app.specy.mars.assembler;
 
 import java.util.ArrayList;
-import java.util.Stack;
 
 import app.specy.mars.ErrorList;
 import app.specy.mars.MIPSprogram;
@@ -57,7 +56,7 @@ public class MacroPool {
     */
    private Macro current;
    private ArrayList<Integer> callStack;
-   private ArrayList<Integer> callStackOrigLines;
+   private ArrayList<SourceLocation> callStackLocations;
    /**
     * @see #getNextCounter()
     */
@@ -72,7 +71,7 @@ public class MacroPool {
       this.program = mipsProgram;
       macroList = new ArrayList<Macro>();
       callStack = new ArrayList<Integer>();
-      callStackOrigLines = new ArrayList<Integer>();
+      callStackLocations = new ArrayList<SourceLocation>();
       current = null;
       counter = 0;
    }
@@ -180,22 +179,28 @@ public class MacroPool {
       if (callStack.contains(sourceLine))
          return true;
       callStack.add(sourceLine);
-      callStackOrigLines.add(origSourceLine);
+      MIPSprogram originalProgram = token.getOriginalProgram();
+      String sourcePath = originalProgram == null ? program.getFilename() : originalProgram.getFilename();
+      callStackLocations.add(new SourceLocation(sourcePath, origSourceLine));
       return false;
    }
 
    public void popFromCallStack() {
       callStack.remove(callStack.size() - 1);
-      callStackOrigLines.remove(callStackOrigLines.size() - 1);
+      callStackLocations.remove(callStackLocations.size() - 1);
    }
 
    public String getExpansionHistory() {
       String ret = "";
-      for (int i = 0; i < callStackOrigLines.size(); i++) {
+      for (int i = 0; i < callStackLocations.size(); i++) {
          if (i > 0)
             ret += "->";
-         ret += callStackOrigLines.get(i).toString();
+         ret += callStackLocations.get(i).toString();
       }
       return ret;
+   }
+
+   public ArrayList<SourceLocation> getExpansionTrace() {
+      return new ArrayList<>(callStackLocations);
    }
 }

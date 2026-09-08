@@ -1,11 +1,10 @@
 //@ts-ignore
-import {makeMipsfromSource as _makeMipsfromSource, initializeMIPS as _initializeMIPS, getInstructionSet as _getInstructionSet} from './generated/mars'
+import {makeMipsFromFiles as _makeMipsFromFiles, initializeMIPS as _initializeMIPS, getInstructionSet as _getInstructionSet} from './generated/mars'
 
 
 export type JsInstructionToken = {
-    sourceLine: number;
+    /** One-based column in the processed source line. */
     sourceColumn: number;
-    originalSourceLine: number;
     value: string;
     type: string
 }
@@ -162,17 +161,33 @@ export type JsInstruction = {
 }
 
 export type MipsTokenizedLine = {
-    line: string;
+    sourcePath: string;
+    /** One-based line in `sourcePath`. */
+    sourceLine: number;
+    /** Exact line supplied in the source set. */
+    source: string;
+    /** Line after assembler substitutions such as `.eqv`. */
+    processedSource: string;
     tokens: JsInstructionToken[]
 }
+
+export type MIPSSourceLocation = {
+    sourcePath: string
+    /** One-based line in `sourcePath`. */
+    sourceLine: number
+}
+
+export type MIPSSourceSet = Readonly<Record<string, string>>
 
 export type MIPSAssembleError = {
     isWarning: boolean
     message: string
-    macroExpansionHistory: string
-    filename: string
-    lineNumber: number
-    columnNumber: number
+    macroExpansionTrace: MIPSSourceLocation[]
+    sourcePath: string
+    /** One-based line in `sourcePath`. */
+    sourceLine: number
+    /** One-based column in `sourcePath`. Zero only for diagnostics without a source location. */
+    sourceColumn: number
 }
 
 export type MIPSAssembleResult = {
@@ -186,7 +201,7 @@ export type MIPSAssembleResult = {
 
 
 export class MIPS {
-    public static makeMipsFromSource = makeMipsfromSource
+    public static makeMipsFromFiles = makeMipsFromFiles
     public static initializeMIPS = initializeMIPS
     public static getInstructionSet(){
         return _getInstructionSet() as JsInstruction[]
@@ -220,8 +235,10 @@ export type JsMipsStackFrame = {
  * Represents a statement in the assembled program.
  */
 export interface JsProgramStatement {
+    /** Canonical path of the original source file. */
+    readonly sourcePath: string;
     /**
-     * The line number in the original source code.
+     * The one-based line number in the original source file.
      */
     readonly sourceLine: number;
     /**
@@ -400,11 +417,8 @@ export interface JsMips {
      */
     getStatementAtAddress(address: number): JsProgramStatement;
 
-    /**
-     * Gets the statement at the given source line.
-     * @param line
-     */
-    getStatementAtSourceLine(line: number): JsProgramStatement;
+    /** Gets every machine statement generated from an original source location. */
+    getStatementsAtSourceLocation(sourcePath: string, sourceLine: number): JsProgramStatement[];
 
 
     getTokenizedLines(): MipsTokenizedLine[]
@@ -431,7 +445,7 @@ export interface JsMips {
     getCompiledStatements(): JsProgramStatement[]
 
 
-    getParsedStatements(): JsInstructionToken[]
+    getParsedStatements(): JsProgramStatement[]
 
 
     getHi(): number;
@@ -590,12 +604,6 @@ export interface JsMips {
     countMemoryObservers(): number;
 
     /**
-     * Gets the index of the current statement in the assembled program.
-     * @returns The index of the current statement.
-     */
-    getCurrentStatementIndex(): number;
-
-    /**
      * Gets the next statement to be executed.
      * @returns The next `JsProgramStatement`.
      */
@@ -618,13 +626,33 @@ export interface JsMips {
 
 
 /**
- * Creates a new MIPS simulator from the given source code.
- * @param source The source code to assemble.
+ * Creates a MIPS simulator from a virtual source tree and its entry file.
+ *
+ * Source paths are canonical, root-relative, case-sensitive POSIX paths. The source set is
+ * snapshotted by this call; only the entry file and files reached through `.include` are assembled.
+ * @param files Source text keyed by canonical source path.
+ * @param entryFile Canonical path of the file from which include expansion starts.
  * @returns A new `JsMips` object.
  */
-function makeMipsfromSource(source: string): JsMips {
+export function makeMipsFromFiles(files: MIPSSourceSet, entryFile: string): JsMips {
+    if (files === null || typeof files !== 'object' || Array.isArray(files)) {
+        throw new TypeError('Source set must be an object')
+    }
+    if (typeof entryFile !== 'string') {
+        throw new TypeError('Entry file must be a string')
+    }
+    const entries = Object.entries(files)
+    for (const [sourcePath, source] of entries) {
+        if (typeof source !== 'string') {
+            throw new TypeError(`Source content must be a string: ${sourcePath}`)
+        }
+    }
     initializeMIPS()
-    return _makeMipsfromSource(source) as JsMips
+    return _makeMipsFromFiles(
+        entries.map(([sourcePath]) => sourcePath),
+        entries.map(([, source]) => source),
+        entryFile,
+    ) as JsMips
 }
 
 /**

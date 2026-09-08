@@ -41,7 +41,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  * to the user.
  */
 public class SourceLine {
-   private String source;
+   private String originalSource;
+   private String processedSource;
    private String filename;
    private MIPSprogram mipsProgram;
    private int lineNumber;
@@ -55,7 +56,12 @@ public class SourceLine {
     * @param lineNumber  The line number within that program where source appears.
     */
    public SourceLine(String source, MIPSprogram mipsProgram, int lineNumber) {
-      this.source = source;
+      this(source, source, mipsProgram, lineNumber);
+   }
+
+   public SourceLine(String originalSource, String processedSource, MIPSprogram mipsProgram, int lineNumber) {
+      this.originalSource = originalSource;
+      this.processedSource = processedSource;
       this.mipsProgram = mipsProgram;
       if (mipsProgram != null)
          this.filename = mipsProgram.getFilename();
@@ -68,7 +74,19 @@ public class SourceLine {
     * @return Source statement as String
     */
    public String getSource() {
-      return source;
+      return processedSource;
+   }
+
+   public String getOriginalSource() {
+      return originalSource;
+   }
+
+   public String getProcessedSource() {
+      return processedSource;
+   }
+
+   public SourceLine withProcessedSource(String source) {
+      return new SourceLine(originalSource, source, mipsProgram, lineNumber);
    }
 
    /**
@@ -78,6 +96,10 @@ public class SourceLine {
     */
 
    public String getFilename() {
+      return filename;
+   }
+
+   public String getSourcePath() {
       return filename;
    }
 

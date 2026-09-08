@@ -98,6 +98,13 @@ public class MIPSprogram {
       return this.sourceLineList;
    }
 
+   public SourceLine getSourceLineInfo(int expandedLineNumber) {
+      if (sourceLineList == null || expandedLineNumber < 1 || expandedLineNumber > sourceLineList.size()) {
+         return null;
+      }
+      return sourceLineList.get(expandedLineNumber - 1);
+   }
+
 
    /**
     * Produces list of tokens that comprise the program.
@@ -228,7 +235,7 @@ public class MIPSprogram {
 
    public void readSource(String fileName, String source) {
       this.currentFileName = fileName;
-      this.currentSourceList = List.of(source.split("\n")); 
+      this.currentSourceList = Arrays.asList(source.split("\n", -1));
    }
 
 
@@ -243,50 +250,21 @@ public class MIPSprogram {
    public void tokenize(MIPSFileSystem files) throws ProcessingException {
       this.tokenizer = new Tokenizer();
       this.tokenList = tokenizer.tokenize(this, files);
-      //TODO should this have a different file name?
-      this.localSymbolTable = new SymbolTable("main"); // prepare for assembly
+      this.localSymbolTable = new SymbolTable(currentFileName); // prepare for assembly
       return;
    }
 
    /**
-    * Prepares the given list of files for assembly. This involves
-    * reading and tokenizing all the source files. There may be only one.
-    * 
-    * @param exceptionHandler String containing name of source file containing
-    *                         exception
-    *                         handler. This will be assembled first, even ahead of
-    *                         leadFilename, to allow it to
-    *                         include "startup" instructions loaded beginning at
-    *                         0x00400000. Specify null or
-    *                         empty String to indicate there is no such designated
-    *                         exception handler.
-    * @return ArrayList containing one MIPSprogram object for each file to
-    *         assemble.
-    *         objects for any additional files (send ArrayList to assembler)
-    * @throws ProcessingException Will throw exception if errors occured while
-    *                             reading or tokenizing.
+    * Reads the entry file and tokenizes its transitive include expansion.
+    *
+    * @param entryFile canonical path of the entry file
+    * @param files virtual source tree used to resolve includes
+    * @throws ProcessingException if tokenization or include expansion fails
     **/
 
-   public List<MIPSprogram> prepareFilesForAssembly(String main, MIPSFileSystem files, MIPSFile exceptionHandler) throws ProcessingException{
-      List<MIPSprogram> MIPSprogramsToAssemble = new ArrayList<MIPSprogram>();
-      List<MIPSFile> filesList = files.getFiles();
-      int leadFilePosition = 0;
-      if (exceptionHandler != null) {
-         filesList.add(0, exceptionHandler);
-         leadFilePosition = 1;
-      }
-      for(MIPSFile file : filesList) {
-         MIPSprogram preparee = (file.getName().equals(main)) ? this : new MIPSprogram();
-         preparee.readSource(file.getName(), file.getSource());
-         preparee.tokenize(files);
-         // I want "this" MIPSprogram to be the first in the list...except for exception ha
-         if (preparee == this && MIPSprogramsToAssemble.size() > 0) {
-            MIPSprogramsToAssemble.add(leadFilePosition, preparee);
-         } else {
-            MIPSprogramsToAssemble.add(preparee);
-         }
-      }
-      return MIPSprogramsToAssemble;
+   public void prepareForAssembly(String entryFile, MIPSFileSystem files) throws ProcessingException {
+      readSource(entryFile, files.read(entryFile));
+      tokenize(files);
    }
 
    /**

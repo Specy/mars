@@ -11,7 +11,13 @@ if (!existsSync(fileURLToPath(dist))) {
     process.exit(1)
 }
 
-const { MIPS, registerHandlers, unimplementedHandler } = await import(dist)
+const packageExports = await import(dist)
+const { MIPS, makeMipsFromFiles, registerHandlers, unimplementedHandler } = packageExports
+
+const makeSingleFileMips = source => makeMipsFromFiles({ 'main.asm': source }, 'main.asm')
+
+assert.equal('makeMipsFromSource' in packageExports, false, 'the v2 single-source export must be removed')
+assert.equal('makeMipsFromSource' in MIPS, false, 'the v2 single-source static factory must be removed')
 
 const SOURCE = `
     .data
@@ -64,7 +70,7 @@ const HANDLER_NAMES = [
     'stdErr',
 ]
 
-const warningProgram = MIPS.makeMipsFromSource(WARNINGS_ONLY_SOURCE)
+const warningProgram = makeSingleFileMips(WARNINGS_ONLY_SOURCE)
 const warningsOnly = warningProgram.assemble()
 assert.equal(warningsOnly.hasErrors, false, `warnings-only assembly failed: ${warningsOnly.report}`)
 assert.equal(warningsOnly.hasWarnings, true, 'warnings-only assembly should report warnings')
@@ -79,12 +85,16 @@ while (!warningProgram.terminated && warningSteps < 10) {
 }
 assert.ok(warningProgram.terminated, 'warnings-only program should remain runnable')
 
-const realError = MIPS.makeMipsFromSource(REAL_ERROR_SOURCE).assemble()
+const realErrorProgram = makeSingleFileMips(REAL_ERROR_SOURCE)
+const realError = realErrorProgram.assemble()
 assert.equal(realError.hasErrors, true, 'invalid assembly should report an error')
 assert.ok(realError.errors.some(error => error.isWarning === false), 'invalid assembly should expose isWarning: false')
+assert.ok(realErrorProgram.getTokenizedLines().length > 0, 'tokens should remain available after completed tokenization')
+assert.throws(() => realErrorProgram.getCompiledStatements(), /not been assembled successfully/)
+assert.throws(() => realErrorProgram.initialize(true), /not been assembled successfully/)
 
 const output = []
-const mips = MIPS.makeMipsFromSource(SOURCE)
+const mips = makeSingleFileMips(SOURCE)
 
 registerHandlers(mips, {
     ...Object.fromEntries(HANDLER_NAMES.map(name => [name, unimplementedHandler(name)])),
@@ -113,6 +123,149 @@ assert.equal(mips.getRegisterValue('$t0'), 55)
 assert.equal(mips.getRegisterValue('$t1'), 11)
 assert.ok(mips.getUndoStack().length > 0, 'undo stack should record executed steps')
 assert.ok(MIPS.getInstructionSet().length > 0, 'instruction set should not be empty')
+
+// Multi-file construction: one immutable virtual source tree, rooted at the entry file.
+const projectFiles = {
+    'src/main.asm': [
+        '.include "../shared/macros.asm"',
+        '.eqv EXIT_CODE 10',
+        '.text',
+        '.globl main',
+        'main:',
+        '    load_magic($t0)',
+        '    jal helper',
+        '    li $v0, EXIT_CODE',
+        '    syscall',
+        '.include "./helper.asm"',
+        '.include "/shared/padding.asm"',
+        '.include "../shared/padding.asm"',
+    ].join('\n'),
+    'src/helper.asm': [
+        '.text',
+        'helper:',
+        '    addiu $t0, $t0, 1',
+        '    jr $ra',
+        '    nop',
+    ].join('\n'),
+    'shared/macros.asm': [
+        '.macro load_magic(%register)',
+        '    li %register, 0x12345678',
+        '.end_macro',
+    ].join('\n'),
+    'shared/padding.asm': [
+        '.text',
+        '    nop',
+    ].join('\n'),
+    'unused.asm': 'bogus_instruction',
+}
+
+const project = MIPS.makeMipsFromFiles(projectFiles, 'src/main.asm')
+assert.throws(() => project.getTokenizedLines(), /not been assembled/, 'tokens should be unavailable before assembly')
+
+// Construction snapshots the caller's object; edits after this point cannot affect the program.
+projectFiles['src/main.asm'] = 'bogus_instruction'
+projectFiles['new.asm'] = 'bogus_instruction'
+
+const projectAssembly = project.assemble()
+assert.equal(projectAssembly.hasErrors, false, `multi-file assembly failed: ${projectAssembly.report}`)
+
+const tokenizedLines = Array.from(project.getTokenizedLines())
+assert.equal(tokenizedLines.some(line => line.source.includes('.include')), false, 'include directives should be replaced')
+assert.equal(tokenizedLines.some(line => line.sourcePath === 'unused.asm'), false, 'unused source files should be ignored')
+
+const substitutedLine = tokenizedLines.find(line => line.sourcePath === 'src/main.asm' && line.sourceLine === 8)
+assert.equal(substitutedLine.source.trim(), 'li $v0, EXIT_CODE')
+assert.equal(substitutedLine.processedSource.trim(), 'li $v0, 10')
+assert.ok(substitutedLine.tokens.every(token => !('sourceLine' in token) && !('originalSourceLine' in token)))
+assert.ok(substitutedLine.tokens.every(token => Number.isInteger(token.sourceColumn) && token.sourceColumn >= 1))
+
+const macroStatements = Array.from(project.getStatementsAtSourceLocation('src/main.asm', 6))
+assert.ok(macroStatements.length >= 2, 'the large li in the macro should expand to multiple machine statements')
+assert.ok(macroStatements.every(statement => statement.sourcePath === 'src/main.asm'))
+assert.ok(macroStatements.every(statement => statement.sourceLine === 6))
+assert.ok(macroStatements.every(statement => statement.source.trim() === 'load_magic($t0)'))
+assert.deepEqual(
+    macroStatements.map(statement => statement.address),
+    [...macroStatements].map(statement => statement.address).sort((a, b) => a - b),
+    'source lookup should return machine statements in address order',
+)
+
+const repeatedStatements = Array.from(project.getStatementsAtSourceLocation('shared/padding.asm', 2))
+assert.equal(repeatedStatements.length, 2, 'each textual inclusion should produce its own machine statement')
+assert.deepEqual(Array.from(project.getStatementsAtSourceLocation('missing.asm', 1)), [])
+assert.throws(() => project.getStatementsAtSourceLocation('./src/main.asm', 1), /canonical|root-relative/)
+assert.throws(() => project.getStatementsAtSourceLocation('src/main.asm', 0), /positive integer/)
+assert.throws(() => project.getStatementsAtSourceLocation('src/main.asm', 1.5), /positive integer/)
+assert.ok(project.getCompiledStatements().length > macroStatements.length, 'the complete machine program should remain available')
+assert.ok(project.getParsedStatements().every(statement => typeof statement.sourcePath === 'string'))
+
+project.initialize(true)
+assert.equal(project.getNextStatement().sourcePath, 'src/main.asm')
+
+assert.throws(
+    () => makeMipsFromFiles({ './main.asm': SOURCE }, './main.asm'),
+    /canonical|root-relative/,
+    'noncanonical source keys should fail construction',
+)
+assert.throws(
+    () => makeMipsFromFiles({ 'main.asm': SOURCE }, 'missing.asm'),
+    /not present/,
+    'the entry file must exist',
+)
+
+const opaquePathAssembly = makeMipsFromFiles({
+    'directory with spaces/π.library.asm': '.text\nnop',
+}, 'directory with spaces/π.library.asm').assemble()
+assert.equal(opaquePathAssembly.hasErrors, false, 'valid source path segments should remain opaque')
+
+const missingIncludeProgram = makeMipsFromFiles({
+    'main.asm': '.include "missing.asm"',
+}, 'main.asm')
+const missingInclude = missingIncludeProgram.assemble()
+assert.equal(missingInclude.hasErrors, true)
+assert.equal(missingInclude.errors[0].sourcePath, 'main.asm')
+assert.equal(missingInclude.errors[0].sourceLine, 1)
+assert.ok(missingInclude.errors[0].sourceColumn >= 1)
+assert.equal('filename' in missingInclude.errors[0], false)
+assert.throws(() => missingIncludeProgram.getTokenizedLines(), /tokenization did not complete/)
+
+const escapingInclude = makeMipsFromFiles({
+    'main.asm': '.include "../outside.asm"',
+}, 'main.asm').assemble()
+assert.equal(escapingInclude.hasErrors, true)
+assert.match(escapingInclude.report, /escapes the virtual root/)
+
+const includeCycle = makeMipsFromFiles({
+    'entry.asm': '.include "a.asm"',
+    'a.asm': '.include "dir/b.asm"',
+    'dir/b.asm': '.include "../a.asm"',
+}, 'entry.asm').assemble()
+assert.equal(includeCycle.hasErrors, true)
+assert.match(includeCycle.report, /entry\.asm -> a\.asm -> dir\/b\.asm -> a\.asm/)
+assert.equal(includeCycle.errors[0].sourcePath, 'dir/b.asm')
+
+const macroError = makeMipsFromFiles({
+    'main.asm': [
+        '.include "macros.asm"',
+        '.text',
+        '.globl main',
+        'main:',
+        '    bad()',
+    ].join('\n'),
+    'macros.asm': [
+        '.macro bad()',
+        '    bogus_instruction',
+        '.end_macro',
+    ].join('\n'),
+}, 'main.asm').assemble()
+assert.equal(macroError.hasErrors, true)
+const expandedDiagnostic = macroError.errors.find(error => error.macroExpansionTrace.length > 0)
+assert.ok(expandedDiagnostic, 'macro diagnostics should expose a structured expansion trace')
+assert.equal(expandedDiagnostic.sourcePath, 'macros.asm')
+assert.deepEqual(Array.from(expandedDiagnostic.macroExpansionTrace).map(location => ({
+    sourcePath: location.sourcePath,
+    sourceLine: location.sourceLine,
+})), [{ sourcePath: 'main.asm', sourceLine: 5 }])
 
 // Peripherals: the framebuffer range, a memory-mapped register and program time. The program
 // stores three words into static data, reads the register word back, sleeps and asks for the time.
@@ -156,7 +309,7 @@ const registerWrites = []
 const slept = []
 let clock = 1000
 
-const peripherals = MIPS.makeMipsFromSource(PERIPHERAL_SOURCE)
+const peripherals = makeSingleFileMips(PERIPHERAL_SOURCE)
 registerHandlers(peripherals, {
     ...Object.fromEntries(HANDLER_NAMES.map(name => [name, unimplementedHandler(name)])),
     // A virtual clock: sleeping advances it instead of waiting, the scripted-run shape.

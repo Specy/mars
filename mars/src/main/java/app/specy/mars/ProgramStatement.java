@@ -57,6 +57,8 @@ public class ProgramStatement {
     private Instruction instruction;
     private int textAddress;
     private int sourceLine;
+    private String sourcePath;
+    private List<SourceLocation> macroExpansionTrace;
     private int binaryStatement;
     private boolean altered;
     private static final String invalidOperator = "<INVALID>";
@@ -83,6 +85,13 @@ public class ProgramStatement {
     public ProgramStatement(MIPSprogram sourceMIPSprogram, String source, TokenList origTokenList,
                             TokenList strippedTokenList,
                             Instruction inst, int textAddress, int sourceLine) {
+        this(sourceMIPSprogram, source, origTokenList, strippedTokenList, inst, textAddress,
+                sourceMIPSprogram == null ? "" : sourceMIPSprogram.getFilename(), sourceLine, List.of());
+    }
+
+    public ProgramStatement(MIPSprogram sourceMIPSprogram, String source, TokenList origTokenList,
+                            TokenList strippedTokenList, Instruction inst, int textAddress,
+                            String sourcePath, int sourceLine, List<SourceLocation> macroExpansionTrace) {
         this.sourceMIPSprogram = sourceMIPSprogram;
         this.source = source;
         this.originalTokenList = origTokenList;
@@ -91,7 +100,9 @@ public class ProgramStatement {
         this.numOperands = 0;
         this.instruction = inst;
         this.textAddress = textAddress;
+        this.sourcePath = sourcePath == null ? "" : sourcePath;
         this.sourceLine = sourceLine;
+        this.macroExpansionTrace = new ArrayList<>(macroExpansionTrace);
         this.basicAssemblyStatement = null;
         this.basicStatementList = new BasicStatementList();
         this.machineStatement = null;
@@ -114,6 +125,9 @@ public class ProgramStatement {
      **/
     public ProgramStatement(int binaryStatement, int textAddress) {
         this.sourceMIPSprogram = null;
+        this.sourcePath = "";
+        this.sourceLine = 0;
+        this.macroExpansionTrace = new ArrayList<>();
         this.binaryStatement = binaryStatement;
         this.textAddress = textAddress;
         this.originalTokenList = this.strippedTokenList = null;
@@ -188,7 +202,7 @@ public class ProgramStatement {
                     registerNumber = RegisterFile.getUserRegister(tokenValue).getNumber();
                 } catch (Exception e) {
                     // should never happen; should be caught before now...
-                    errors.add(new ErrorMessage(this.sourceMIPSprogram, token.getSourceLine(), token.getStartPos(),
+                    errors.add(new ErrorMessage(this, token.getStartPos(),
                             "invalid register name"));
                     return;
                 }
@@ -200,7 +214,7 @@ public class ProgramStatement {
                 basicStatementList.addString(basicStatementElement);
                 if (registerNumber < 0) {
                     // should never happen; should be caught before now...
-                    errors.add(new ErrorMessage(this.sourceMIPSprogram, token.getSourceLine(), token.getStartPos(),
+                    errors.add(new ErrorMessage(this, token.getStartPos(),
                             "invalid register name"));
                     return;
                 }
@@ -212,7 +226,7 @@ public class ProgramStatement {
                 basicStatementList.addString(basicStatementElement);
                 if (registerNumber < 0) {
                     // should never happen; should be caught before now...
-                    errors.add(new ErrorMessage(this.sourceMIPSprogram, token.getSourceLine(), token.getStartPos(),
+                    errors.add(new ErrorMessage(this, token.getStartPos(),
                             "invalid FPU register name"));
                     return;
                 }
@@ -220,7 +234,7 @@ public class ProgramStatement {
             } else if (tokenType == TokenTypes.IDENTIFIER) {
                 int address = this.sourceMIPSprogram.getLocalSymbolTable().getAddressLocalOrGlobal(tokenValue);
                 if (address == SymbolTable.NOT_FOUND) { // symbol used without being defined
-                    errors.add(new ErrorMessage(this.sourceMIPSprogram, token.getSourceLine(), token.getStartPos(),
+                    errors.add(new ErrorMessage(this, token.getStartPos(),
                             "Symbol \"" + tokenValue + "\" not found in symbol table."));
                     return;
                 }
@@ -368,7 +382,7 @@ public class ProgramStatement {
         // pseudo-instruction (expansion must be to all basic instructions).
         // This is an error on the part of the pseudo-instruction author.
         catch (ClassCastException cce) {
-            errors.add(new ErrorMessage(this.sourceMIPSprogram, this.sourceLine, 0,
+            errors.add(new ErrorMessage(this, 0,
                     "INTERNAL ERROR: pseudo-instruction expansion contained a pseudo-instruction"));
             return;
         }
@@ -379,7 +393,7 @@ public class ProgramStatement {
                 // attempt to jump beyond 28-bit byte (26-bit word) address range.
                 // SPIM flags as warning, I'll flag as error b/c MARS text segment not long
                 // enough for it to be OK.
-                errors.add(new ErrorMessage(this.sourceMIPSprogram, this.sourceLine, 0,
+                errors.add(new ErrorMessage(this, 0,
                         "Jump target word address beyond 26-bit range"));
                 return;
             }
@@ -493,7 +507,11 @@ public class ProgramStatement {
      * @return The file name.
      **/
     public String getSourceFile() {
-        return (sourceMIPSprogram == null) ? "" : sourceMIPSprogram.getFilename();
+        return sourcePath;
+    }
+
+    public String getSourcePath() {
+        return sourcePath;
     }
 
     /**
@@ -514,6 +532,10 @@ public class ProgramStatement {
 
     public int getSourceLine() {
         return sourceLine;
+    }
+
+    public List<SourceLocation> getMacroExpansionTrace() {
+        return new ArrayList<>(macroExpansionTrace);
     }
 
     /**
@@ -630,7 +652,7 @@ public class ProgramStatement {
         int startPos = this.machineStatement.indexOf(mask);
         int endPos = this.machineStatement.lastIndexOf(mask);
         if (startPos == -1 || endPos == -1) { // should NEVER occur
-            errors.add(new ErrorMessage(this.sourceMIPSprogram, this.sourceLine, 0,
+            errors.add(new ErrorMessage(this, 0,
                     "INTERNAL ERROR: mismatch in number of operands in statement vs mask"));
             return;
         }

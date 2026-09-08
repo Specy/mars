@@ -4,6 +4,9 @@ import app.specy.mars.Globals;
 import app.specy.mars.MIPS;
 import app.specy.mars.ProcessingException;
 import app.specy.mars.ProgramStatement;
+import app.specy.mars.assembler.SourceLine;
+import app.specy.mars.assembler.TokenList;
+import app.specy.mars.mips.fs.MemoryFileSystem;
 import app.specy.mars.mips.hardware.AddressErrorException;
 import app.specy.mars.mips.hardware.Coprocessor1;
 import app.specy.mars.mips.hardware.Register;
@@ -44,9 +47,16 @@ public class JsMips {
     }
 
     @JSExport
-    public static JsMips makeMipsfromSource(String source) throws ProcessingException {
+    public static JsMips makeMipsFromFiles(String[] sourcePaths, String[] sources, String entryFile) {
         JsMips.getIOHandler(); // Ensure that the IO handler is initialized
-        return new JsMips(MIPS.fromSource(source));
+        if (sourcePaths == null || sources == null || sourcePaths.length != sources.length) {
+            throw new IllegalArgumentException("Source paths and contents must have the same length");
+        }
+        MemoryFileSystem files = new MemoryFileSystem();
+        for (int i = 0; i < sourcePaths.length; i++) {
+            files.write(sourcePaths[i], sources[i]);
+        }
+        return new JsMips(MIPS.fromFs(entryFile, files));
     }
 
     @JSExport
@@ -60,13 +70,21 @@ public class JsMips {
 
     @JSExport
     public JsMipsTokenizedLine[] getTokenizedLines() {
-        return this.main.getTokens().stream().map((v) -> {
-            JsMipsToken[] tokens = new JsMipsToken[v.size()];
-            for (int i = 0; i < v.size(); i++) {
-                tokens[i] = new JsMipsToken(v.get(i));
+        List<TokenList> tokenizedLines = this.main.getTokens();
+        List<SourceLine> sourceLines = this.main.getSourceLines();
+        JsMipsTokenizedLine[] result = new JsMipsTokenizedLine[tokenizedLines.size()];
+        for (int lineIndex = 0; lineIndex < tokenizedLines.size(); lineIndex++) {
+            TokenList tokenizedLine = tokenizedLines.get(lineIndex);
+            SourceLine sourceLine = sourceLines.get(lineIndex);
+            JsMipsToken[] tokens = new JsMipsToken[tokenizedLine.size()];
+            for (int tokenIndex = 0; tokenIndex < tokenizedLine.size(); tokenIndex++) {
+                tokens[tokenIndex] = new JsMipsToken(tokenizedLine.get(tokenIndex));
             }
-            return new JsMipsTokenizedLine(v.getProcessedLine(), tokens);
-        }).toArray(JsMipsTokenizedLine[]::new);
+            result[lineIndex] = new JsMipsTokenizedLine(sourceLine.getSourcePath(),
+                    sourceLine.getLineNumber(), sourceLine.getOriginalSource(),
+                    sourceLine.getProcessedSource(), tokens);
+        }
+        return result;
     }
 
     @JSExport
@@ -343,12 +361,6 @@ public class JsMips {
     }
 
     @JSExport
-    public int getCurrentStatementIndex() {
-        return this.main.getStatementAtAddress(this.getProgramCounter()).getSourceLine();
-    }
-
-
-    @JSExport
     public JsProgramStatement getNextStatement() {
         return new JsProgramStatement(this.main.getStatementAtAddress(this.getProgramCounter()));
     }
@@ -379,12 +391,14 @@ public class JsMips {
     }
 
     @JSExport
-    public JsProgramStatement getStatementAtSourceLine(int line) {
-        ProgramStatement s = this.main.getAddressFromSourceLine(line);
-        if(s == null) {
-            return null;
+    public JsProgramStatement[] getStatementsAtSourceLocation(String sourcePath, double sourceLine) {
+        if (!Double.isFinite(sourceLine) || sourceLine < 1 || sourceLine != Math.floor(sourceLine)
+                || sourceLine > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("Source line must be a positive integer");
         }
-        return new JsProgramStatement(s);
+        return this.main.getStatementsAtSourceLocation(sourcePath, (int) sourceLine).stream()
+                .map(JsProgramStatement::new)
+                .toArray(JsProgramStatement[]::new);
     }
 
     @JSExport
