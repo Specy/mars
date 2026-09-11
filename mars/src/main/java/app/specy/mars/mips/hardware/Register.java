@@ -43,6 +43,9 @@ public class Register extends Observable {
    private String name;
    private int number, resetValue;
    // volatile should be enough to allow safe multi-threaded access
+   // The accessors below take that at its word and are no longer synchronized: the simulator
+   // touches them several times per instruction and this fork is headless and single threaded
+   // under TeaVM, so entering and leaving a monitor each time guarded nothing.
    // w/o the use of synchronized methods. getValue and setValue
    // are the only methods here used by the register collection
    // (RegisterFile, Coprocessor0, Coprocessor1) methods.
@@ -80,7 +83,7 @@ public class Register extends Observable {
     * @return value The value of the Register.
     */
 
-   public synchronized int getValue() {
+   public int getValue() {
       notifyAnyObservers(AccessNotice.READ);
       return value;
    }
@@ -92,7 +95,7 @@ public class Register extends Observable {
     * @return value The value of the Register.
     */
 
-   public synchronized int getValueNoNotify() {
+   public int getValueNoNotify() {
       return value;
    }
 
@@ -124,7 +127,7 @@ public class Register extends Observable {
     * @return previous value of register
     */
 
-   public synchronized int setValue(int val) {
+   public int setValue(int val) {
       int old = value;
       value = val;
       notifyAnyObservers(AccessNotice.WRITE);

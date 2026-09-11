@@ -425,7 +425,7 @@ public class BackStepper {
     // implemented with an array, right? This is a circular stack! When full, the
     // newly-pushed item overwrites the oldest item, with circular top! All
     // operations
-    // are constant time. It's synchronized too, to be safe (is used by both the
+    // are constant time. Upstream synchronized it too, to be safe (it was used by both the
     // simulation thread and the GUI thread for the back-step button).
     // Upon construction, it is filled with newly-created empty BackStep objects
     // which
@@ -465,11 +465,11 @@ public class BackStepper {
             return usedStack;
         }
 
-        private synchronized boolean empty() {
+        private boolean empty() {
             return size == 0;
         }
 
-        private synchronized void push(int act, int programCounter, int parm1, int parm2) {
+        private void push(int act, int programCounter, int parm1, int parm2) {
             if (size == 0) {
                 top = 0;
                 size++;
@@ -484,17 +484,17 @@ public class BackStepper {
             stack[top].assign(act, programCounter, parm1, parm2);
         }
 
-        private synchronized void push(int act, int programCounter, int parm1) {
+        private void push(int act, int programCounter, int parm1) {
             push(act, programCounter, parm1, 0);
         }
 
-        private synchronized void push(int act, int programCounter) {
+        private void push(int act, int programCounter) {
             push(act, programCounter, 0, 0);
         }
 
         // NO PROTECTION. This class is used only within this file so there is no excuse
         // for trying to pop from empty stack.
-        private synchronized BackStep pop() {
+        private BackStep pop() {
             BackStep bs;
             bs = stack[top];
             if (size == 1) {
@@ -508,7 +508,7 @@ public class BackStepper {
 
         // NO PROTECTION. This class is used only within this file so there is no excuse
         // for trying to peek from empty stack.
-        private synchronized BackStep peek() {
+        private BackStep peek() {
             return stack[top];
         }
 

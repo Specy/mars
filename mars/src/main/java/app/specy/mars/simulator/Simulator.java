@@ -327,11 +327,11 @@ public class Simulator extends Observable {
             while (statement != null) {
                 pc = RegisterFile.getProgramCounter(); // added: 7/26/06 (explanation above)
                 RegisterFile.incrementPC();
-                // Perform the MIPS instruction in synchronized block. If external threads agree
-                // to access MIPS memory and registers only through synchronized blocks on same
-                // lock variable, then full (albeit heavy-handed) protection of MIPS memory and
-                // registers is assured. Not as critical for reading from those resources.
-                synchronized (Globals.memoryAndRegistersLock) {
+                // Upstream performed the MIPS instruction in a synchronized block, so that external
+                // threads accessing MIPS memory and registers through the same lock were given full
+                // (albeit heavy-handed) protection. This fork is headless and runs single threaded
+                // under TeaVM, so the block below is no longer synchronized.
+                {
                     try {
                         if (Simulator.externalInterruptingDevice != NO_DEVICE) {
                             int deviceInterruptCode = externalInterruptingDevice;
