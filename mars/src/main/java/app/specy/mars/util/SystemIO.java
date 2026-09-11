@@ -323,7 +323,11 @@ public class SystemIO {
       int fdToUse;
 
       // Check internal plausibility of opening this file
-      fdToUse = FileIOData.nowOpening(filename, flags);
+      // The host allocates the descriptor and returns it below, so this table is cleared of
+        // its entries first: `nowOpening` is kept only for its flag and name validation,
+        // and a table left full of past opens would refuse one the host would accept.
+        FileIOData.releaseHostDescriptors();
+        fdToUse = FileIOData.nowOpening(filename, flags);
       retValue = fdToUse; // return value is the fd
       if (fdToUse < 0) {
          return -1;
@@ -332,8 +336,8 @@ public class SystemIO {
       if (flags == O_RDONLY) // Open for reading only
       {
          try {
-            io.openFile(filename, flags, false);
-            FileIOData.setStreamInUse(fdToUse);
+            retValue = io.openFile(filename, flags, false);
+            FileIOData.setStreamInUse(retValue);
          } catch (MIPSIOError e) {
             fileErrorString = new String(
                   "Error with file " + filename);
@@ -343,8 +347,8 @@ public class SystemIO {
       {
          // Set up output stream to disk file
          try {
-            io.openFile(filename, flags, ((flags & O_APPEND) != 0));
-            FileIOData.setStreamInUse(fdToUse);
+            retValue = io.openFile(filename, flags, ((flags & O_APPEND) != 0));
+            FileIOData.setStreamInUse(retValue);
          } catch (MIPSIOError e) {
             fileErrorString = new String(
                   "Error with file " + filename);
@@ -394,14 +398,25 @@ public class SystemIO {
                                                                       // filenames
 
       // Reset all file information. Closes any open files and resets the arrays
+      // Reset all file information. The host owns every descriptor above STDERR, so this
+      // drops the table's record of them rather than forwarding a close for each: the
+      // session that owned them has already ended.
       private static void resetFiles() {
-         for (int i = 0; i < SYSCALL_MAXFILES; i++) {
-            close(i);
-         }
-         setupStdio();
+          releaseHostDescriptors();
+          setupStdio();
       }
 
       // DPS 8-Jan-2013
+      // Forget every descriptor the host owns. Their lifetime is the host's, so this only
+      // drops what this table recorded about them.
+      private static void releaseHostDescriptors() {
+          for (int fd = STDERR + 1; fd < SYSCALL_MAXFILES; fd++) {
+              fileNames[fd] = null;
+              fileFlags[fd] = -1;
+              streams[fd] = null;
+          }
+      }
+
       private static void setupStdio() {
          fileNames[STDIN] = "STDIN";
          fileNames[STDOUT] = "STDOUT";
@@ -419,6 +434,9 @@ public class SystemIO {
 
       // Preserve a stream that is in use
       private static void setStreamInUse(int fd) {
+            if (fd < 0 || fd >= SYSCALL_MAXFILES) {
+                return;
+            }
          streams[fd] = true;
 
       }
@@ -442,6 +460,12 @@ public class SystemIO {
 
       // Determine whether a given fd is already in use with the given flag.
       private static boolean fdInUse(int fd, int flag) {
+          // Descriptors above STDERR belong to the host and are not tracked here, so only
+          // it can say whether one is open; a read or write on such a descriptor is passed
+          // through and fails there if it is not.
+          if (fd > STDERR) {
+              return true;
+          }
          if (fd < 0 || fd >= SYSCALL_MAXFILES) {
             return false;
          } else if (fileNames[fd] != null && fileFlags[fd] == 0 && flag == 0) { // O_RDONLY read-only
@@ -456,24 +480,28 @@ public class SystemIO {
       // Close the file with file descriptor fd. No errors are recoverable -- if the
       // user's
       // made an error in the call, it will come back to him.
+      // Close the file with file descriptor fd. No errors are recoverable -- if the user's
+      // made an error in the call, it will come back to him.
       private static void close(int fd) {
-         // Can't close STDIN, STDOUT, STDERR, or invalid fd
-         if (fd <= STDERR || fd >= SYSCALL_MAXFILES)
-            return;
-
-         fileNames[fd] = null;
-         // All this code will be executed only if the descriptor is open.
-         if (streams[fd] != null) {
-            fileFlags[fd] = -1;
-            streams[fd] = null;
-            try {
-               io.closeFile(fd);
-            } catch (MIPSIOError ioe) {
-               // not concerned with this exception
-            }
-         } else {
-            fileFlags[fd] = -1; // just to be sure... streams[fd] known to be null
-         }
+          // Can't close STDIN, STDOUT or STDERR
+          if (fd <= STDERR) {
+              return;
+          }
+          // The table only has room for the low descriptors; the host may have handed out
+          // a higher one, and it is closed just the same.
+          if (fd < SYSCALL_MAXFILES) {
+              fileNames[fd] = null;
+              fileFlags[fd] = -1;
+              streams[fd] = null;
+          }
+          // Forwarded unconditionally: the host holds the file even when this table never
+          // recorded a stream for the descriptor, which is the usual case now that the host
+          // is the one that allocates them.
+          try {
+              io.closeFile(fd);
+          } catch (MIPSIOError ioe) {
+              // not concerned with this exception
+          }
       }
 
       // Attempt to open a new file with the given flag, using the lowest available
