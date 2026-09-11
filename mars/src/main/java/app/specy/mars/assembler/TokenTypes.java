@@ -44,6 +44,20 @@ public final class TokenTypes {
 
    public static final String TOKEN_DELIMITERS = "\t ,()";
    public static final TokenTypes COMMENT = new TokenTypes("COMMENT");
+   /**
+    * A token a C compiler writes for the linker, such as the "@function" of a
+    * ".type" directive. Nothing in the language reads one; the type exists so that
+    * such a token can be carried rather than rejected.
+    **/
+   public static final TokenTypes TAG = new TokenTypes("TAG");
+   /**
+    * The "%hi" of "lui $t0, %hi(label)": the upper half of a symbol's address.
+    **/
+   public static final TokenTypes HI = new TokenTypes("HI");
+   /**
+    * The "%lo" of "lw $t0, %lo(label)($t1)": the lower half of a symbol's address.
+    **/
+   public static final TokenTypes LO = new TokenTypes("LO");
    public static final TokenTypes DIRECTIVE = new TokenTypes("DIRECTIVE");
    public static final TokenTypes OPERATOR = new TokenTypes("OPERATOR");
    public static final TokenTypes DELIMITER = new TokenTypes("DELIMITER");
@@ -114,6 +128,16 @@ public final class TokenTypes {
       // See if it is a comment
       if (value.charAt(0) == '#')
          return TokenTypes.COMMENT;
+
+      // See if it is a linker tag, as in ".type sum, @function"
+      if (value.charAt(0) == '@')
+         return TokenTypes.TAG;
+
+      // The relocation operators a C compiler uses to reach a symbol in two halves
+      if (value.equals("%hi"))
+         return TokenTypes.HI;
+      if (value.equals("%lo"))
+         return TokenTypes.LO;
 
       // See if it is one of the simple tokens
       if (value.length() == 1) {

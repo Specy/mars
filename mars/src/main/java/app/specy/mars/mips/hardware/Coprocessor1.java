@@ -547,4 +547,68 @@ public class Coprocessor1 {
    public static int getConditionFlagCount() {
       return numConditionFlags;
    }
+
+   /**
+    * Number of the FP Condition Codes Register, readable with "cfc1".
+    */
+   public static final int FCCR_REGISTER = 25;
+
+   /**
+    * Number of the FP Control and Status Register, readable with "cfc1".
+    */
+   public static final int FCSR_REGISTER = 31;
+
+   /**
+    * Read one of the floating point control registers.
+    * <p>
+    * Only the condition codes are modelled. FCCR (25) reports them in its low 8
+    * bits, FCSR (31) in the scattered positions the architecture gives them.
+    * The rounding mode reads as 0 because this simulator always rounds to
+    * nearest, and the cause, enable and flag fields read as 0 because FP
+    * exceptions are not tracked. Every other control register reads as 0.
+    *
+    * @param register control register number
+    * @return the value of that control register
+    */
+   public static int getControlValue(int register) {
+      int flags = getConditionFlags() & 0xFF;
+      switch (register) {
+         case FCCR_REGISTER:
+            return flags;
+         case FCSR_REGISTER:
+            // FCC0 sits alone at bit 23, FCC1 through FCC7 run from bit 25 up
+            return ((flags & 0x1) << 23) | ((flags >>> 1) << 25);
+         default:
+            return 0;
+      }
+   }
+
+   /**
+    * Write one of the floating point control registers. Only the condition
+    * codes of FCCR (25) and FCSR (31) are modelled; all other bits, and all
+    * other registers, are ignored. See getControlValue.
+    *
+    * @param register control register number
+    * @param value    value to write
+    */
+   public static void setControlValue(int register, int value) {
+      int flags;
+      switch (register) {
+         case FCCR_REGISTER:
+            flags = value & 0xFF;
+            break;
+         case FCSR_REGISTER:
+            flags = ((value >>> 23) & 0x1) | (((value >>> 25) & 0x7F) << 1);
+            break;
+         default:
+            return;
+      }
+      for (int flag = 0; flag < numConditionFlags; flag++) {
+         if ((flags & (1 << flag)) != 0) {
+            setConditionFlag(flag);
+         } else {
+            clearConditionFlag(flag);
+         }
+      }
+   }
 }

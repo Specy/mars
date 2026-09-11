@@ -3,7 +3,6 @@ package app.specy.mars.mips.hardware;
 import java.util.*;
 
 import app.specy.mars.*;
-import app.specy.mars.config.SettingsProperties;
 import app.specy.mars.mips.instructions.*;
 import app.specy.mars.simulator.*;
 import app.specy.mars.util.*;
@@ -449,7 +448,7 @@ public class Memory extends Observable {
          // Burch Mod (Jan 2013): replace throw with call to setStatement
          // DPS adaptation 5-Jul-2013: either throw or call, depending on setting
 
-         if (Globals.getSettingsProperties().getBooleanValue(SettingsProperties.SelfModifyingCode)) {
+         if (Globals.getSettingsProperties().getSelfModifyingCodeEnabled()) {
             ProgramStatement oldStatement = getStatementNoNotify(address);
             if (oldStatement != null) {
                oldValue = oldStatement.getBinaryStatement();
@@ -538,7 +537,7 @@ public class Memory extends Observable {
       } else if (inTextSegment(address)) {
          // Burch Mod (Jan 2013): replace throw with call to setStatement
          // DPS adaptation 5-Jul-2013: either throw or call, depending on setting
-         if (Globals.getSettingsProperties().getBooleanValue(SettingsProperties.SelfModifyingCode)) {
+         if (Globals.getSettingsProperties().getSelfModifyingCodeEnabled()) {
             ProgramStatement oldStatement = getStatementNoNotify(address);
             if (oldStatement != null) {
                oldValue = oldStatement.getBinaryStatement();
@@ -720,7 +719,7 @@ public class Memory extends Observable {
          // Burch Mod (Jan 2013): replace throw with calls to getStatementNoNotify &
          // getBinaryStatement
          // DPS adaptation 5-Jul-2013: either throw or call, depending on setting
-         if (Globals.getSettingsProperties().getBooleanValue(SettingsProperties.SelfModifyingCode)) {
+         if (Globals.getSettingsProperties().getSelfModifyingCodeEnabled()) {
             ProgramStatement stmt = getStatementNoNotify(address);
             value = stmt == null ? 0 : stmt.getBinaryStatement();
          } else {
@@ -787,7 +786,7 @@ public class Memory extends Observable {
          // Burch Mod (Jan 2013): replace throw with calls to getStatementNoNotify &
          // getBinaryStatement
          // DPS adaptation 5-Jul-2013: either throw or call, depending on setting
-         if (Globals.getSettingsProperties().getBooleanValue(SettingsProperties.SelfModifyingCode)) {
+         if (Globals.getSettingsProperties().getSelfModifyingCodeEnabled()) {
             ProgramStatement stmt = getStatementNoNotify(address);
             value = stmt == null ? 0 : stmt.getBinaryStatement();
          } else {
@@ -991,6 +990,25 @@ public class Memory extends Observable {
     **/
 
    public ProgramStatement getStatement(int address) throws AddressErrorException {
+      // The simulator fetches through here once per instruction, and the general path below
+      // re-checks alignment, the self-modifying-code setting and both text segments before
+      // reaching the block table. An aligned address holding an assembled statement - which is
+      // every fetch of a running program - is answered here instead.
+      int relative = (address - textBaseAddress) >> 2;
+      if ((address & 3) == 0 && address >= textBaseAddress && address < textLimitAddress
+            && relative < (TEXT_BLOCK_TABLE_LENGTH * TEXT_BLOCK_LENGTH_WORDS)) {
+         ProgramStatement[] block = textBlockTable[relative / TEXT_BLOCK_LENGTH_WORDS];
+         if (block != null) {
+            ProgramStatement statement = block[relative % TEXT_BLOCK_LENGTH_WORDS];
+            if (statement != null) {
+               if (observablesSnapshot.length > 0) {
+                  notifyAnyObservers(AccessNotice.READ, address, Instruction.INSTRUCTION_LENGTH,
+                        statement.getBinaryStatement());
+               }
+               return statement;
+            }
+         }
+      }
       return getStatement(address, true);
       /*
        * if (address % 4 != 0 || !(inTextSegment(address) ||
@@ -1051,7 +1069,7 @@ public class Memory extends Observable {
                "fetch address for text segment not aligned to word boundary ",
                Exceptions.ADDRESS_EXCEPTION_LOAD, address);
       }
-      if (!Globals.getSettingsProperties().getBooleanValue(SettingsProperties.SelfModifyingCode)
+      if (!Globals.getSettingsProperties().getSelfModifyingCodeEnabled()
             && !(inTextSegment(address) || inKernelTextSegment(address))) {
          throw new AddressErrorException(
                "fetch address for text segment out of range ",
@@ -1433,6 +1451,26 @@ public class Memory extends Observable {
          if (delta != 0) {
             relativeByteAddress += (4 - delta) << 1;
          }
+      }
+      // A word-aligned word access - every lw and sw a program makes - is the whole int in the
+      // table, so it is read or written directly rather than assembled a byte at a time through
+      // four divisions and eight replaceByte calls. Little-endian packs value byte k into memory
+      // byte k, which makes this the identical value; big-endian would not, so it is excluded.
+      if (length == WORD_LENGTH_BYTES && (relativeByteAddress % WORD_LENGTH_BYTES) == 0
+            && byteOrder == LITTLE_ENDIAN) {
+         int relativeWord = relativeByteAddress >> 2;
+         int wordBlock = relativeWord / BLOCK_LENGTH_WORDS;
+         int wordOffset = relativeWord % BLOCK_LENGTH_WORDS;
+         if (blockTable[wordBlock] == null) {
+            if (op == FETCH)
+               return 0;
+            blockTable[wordBlock] = new int[BLOCK_LENGTH_WORDS];
+         }
+         if (op == FETCH)
+            return blockTable[wordBlock][wordOffset];
+         oldValue = blockTable[wordBlock][wordOffset];
+         blockTable[wordBlock][wordOffset] = value;
+         return oldValue;
       }
       for (bytePositionInValue = 3; bytePositionInValue > loopStopper; bytePositionInValue--) {
          bytePositionInMemory = relativeByteAddress % 4;

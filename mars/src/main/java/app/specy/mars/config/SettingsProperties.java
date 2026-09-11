@@ -28,9 +28,31 @@ public class SettingsProperties extends ConfigMap {
 
     public static final String MemoryConfiguration = "MemoryConfiguration";
 
+    /*
+     * The simulator reads SelfModifyingCode on every instruction fetch and every data access, and
+     * DelayedBranching on every branch. Going through the map for those costs a hash lookup and a
+     * Boolean.parseBoolean - which is a String.equalsIgnoreCase, so a fresh lowercased string - per
+     * access, which was about a fifth of simulation. They are mirrored in primitives here instead,
+     * refreshed by the one mutator the map has.
+     */
+    private boolean selfModifyingCode;
+    private boolean delayedBranching;
+
     public SettingsProperties() {
         super();
         reset();
+    }
+
+    @Override
+    public String put(String key, String value) {
+        String previous = super.put(key, value);
+        refreshCachedFlags();
+        return previous;
+    }
+
+    private void refreshCachedFlags() {
+        selfModifyingCode = Boolean.parseBoolean(get(SelfModifyingCode));
+        delayedBranching = Boolean.parseBoolean(get(DelayedBranching));
     }
 
     public void reset() {
@@ -53,10 +75,15 @@ public class SettingsProperties extends ConfigMap {
         put(PopupInstructionGuidance, "true");
 
         put(MemoryConfiguration, "");
+        refreshCachedFlags();
     }
 
     public boolean getDelayedBranchingEnabled() {
-        return getBooleanValue(DelayedBranching);
+        return delayedBranching;
+    }
+
+    public boolean getSelfModifyingCodeEnabled() {
+        return selfModifyingCode;
     }
 
     public boolean getBareMachineEnabled() {

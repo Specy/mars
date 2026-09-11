@@ -87,6 +87,30 @@ public final class Directives {
    public static final Directives INCLUDE = new Directives(".include",
          "Insert the contents of the specified file.  Put filename in quotes.");
 
+   /* Directives below this point exist so that the output of a C compiler assembles. */
+   public static final Directives SECTION = new Directives(".section",
+         "Switch to the named section. A read-only or zeroed section becomes part of the data segment here");
+   public static final Directives RDATA = new Directives(".rdata",
+         "Subsequent items stored in the Data segment. Read-only data is not separated out in this simulator");
+   public static final Directives SDATA = new Directives(".sdata", "Alias for .rdata");
+   public static final Directives BSS = new Directives(".bss",
+         "Subsequent items stored in the Data segment, which starts out zeroed");
+   public static final Directives SBSS = new Directives(".sbss", "Alias for .bss");
+   public static final Directives ZERO = new Directives(".zero",
+         "Reserve the next specified number of bytes, which read as zero. Alias for .space");
+   public static final Directives COMM = new Directives(".comm",
+         "Reserve the given number of bytes for a global symbol, the way a C compiler declares an uninitialized global variable. Takes a symbol, a size in bytes and an optional alignment");
+   public static final Directives LCOMM = new Directives(".lcomm",
+         "Reserve the given number of bytes for a symbol local to this file, the way a C compiler declares an uninitialized static variable");
+   public static final Directives P2ALIGN = new Directives(".p2align", "Alias for .align");
+   public static final Directives BALIGN = new Directives(".balign",
+         "Align next data item on the given byte boundary, written directly rather than as a power of two");
+   public static final Directives TWO_BYTE = new Directives(".2byte", "Alias for .half");
+   public static final Directives FOUR_BYTE = new Directives(".4byte", "Alias for .word");
+   public static final Directives ASCIZ = new Directives(".asciz", "Alias for .asciiz");
+   public static final Directives STRING = new Directives(".string", "Alias for .asciiz");
+   public static final Directives GLOBAL = new Directives(".global", "Alias for .globl");
+
    private String descriptor;
    private String description; // help text
 
@@ -110,6 +134,35 @@ public final class Directives {
     * @return If match is found, returns matching Directives object, else returns
     *         <tt>null</tt>.
     **/
+
+   /**
+    * Reduce an alias to the directive it is spelled differently from, so that the
+    * rest of the assembler only ever sees the canonical one. The alias keeps its own
+    * entry in the directive list, so it is still offered by autocomplete and carries
+    * its own description.
+    *
+    * @param direct a directive, possibly an alias
+    * @return the directive that does the work, or the argument unchanged
+    **/
+   public static Directives canonical(Directives direct) {
+      if (direct == TWO_BYTE)
+         return HALF;
+      if (direct == FOUR_BYTE)
+         return WORD;
+      if (direct == P2ALIGN)
+         return ALIGN;
+      if (direct == ZERO)
+         return SPACE;
+      if (direct == ASCIZ || direct == STRING)
+         return ASCIIZ;
+      if (direct == GLOBAL)
+         return GLOBL;
+      if (direct == SDATA)
+         return RDATA;
+      if (direct == SBSS)
+         return BSS;
+      return direct;
+   }
 
    public static Directives matchDirective(String str) {
       Directives match;

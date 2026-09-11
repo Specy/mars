@@ -597,6 +597,9 @@ public class Assembler {
       // (which is
       // a nice thing to do).
       if (tokenType == TokenTypes.IDENTIFIER && token.getValue().charAt(0) == '.') {
+         if (isMetadataDirective(token.getValue())) {
+            return null;
+         }
          errors.add(new ErrorMessage(ErrorMessage.WARNING, token.getSourceMIPSprogram(), token
                .getSourceLine(), token.getStartPos(),
                "MARS does not recognize the "
@@ -734,6 +737,90 @@ public class Assembler {
       }
    } // parseLabel()
 
+   // A C compiler names sections rather than using .data and .text. Read-only and
+   // zeroed sections both become the data segment here, because this simulator has
+   // only the one; a section that holds no program data is simply skipped.
+   private void executeSectionDirective(TokenList tokens) {
+      Token token = tokens.get(0);
+      if (tokens.size() < 2) {
+         errors.add(new ErrorMessage(ErrorMessage.WARNING, token.getSourceMIPSprogram(),
+               token.getSourceLine(), token.getStartPos(), ".section without arguments is ignored"));
+         return;
+      }
+      Token section = tokens.get(1);
+      if (section.getType() != TokenTypes.QUOTED_STRING && section.getType() != TokenTypes.IDENTIFIER) {
+         errors.add(new ErrorMessage(token.getSourceMIPSprogram(), token.getSourceLine(),
+               token.getStartPos(), ".section must be followed by a section name"));
+         return;
+      }
+      String name = section.getValue();
+      if (name.startsWith(".data") || name.startsWith(".rodata") || name.startsWith(".rdata")
+            || name.startsWith(".sdata") || name.startsWith(".bss") || name.startsWith(".sbss")) {
+         this.inDataSegment = true;
+         this.autoAlign = true;
+         this.dataAddress.setAddressSpace(this.dataAddress.USER);
+      } else if (name.startsWith(".text")) {
+         this.inDataSegment = false;
+         this.textAddress.setAddressSpace(this.textAddress.USER);
+      } else if (name.startsWith(".note") || name.startsWith(".mdebug") || name.startsWith(".comment")) {
+         // holds no program data, so there is nothing to place
+      } else {
+         errors.add(new ErrorMessage(ErrorMessage.WARNING, token.getSourceMIPSprogram(),
+               token.getSourceLine(), token.getStartPos(), "section name \"" + name + "\" is ignored"));
+      }
+   }
+
+   /**
+    * Directives a C compiler emits for the linker and the debugger. None of them
+    * contributes anything to the program image, so ignoring one is the correct
+    * outcome rather than a compromise, and warning about it would only bury the
+    * warnings that do mean something.
+    **/
+   private static final String[] METADATA_DIRECTIVES = {
+         ".file", ".ident", ".version", ".option", ".attribute", ".size", ".type",
+         ".local", ".weak", ".hidden", ".protected", ".internal", ".addrsig", ".addrsig_sym",
+         ".ent", ".end", ".aent", ".frame", ".mask", ".fmask", ".abicalls", ".nan",
+         ".module", ".previous", ".insn",
+   };
+
+   private static boolean isMetadataDirective(String name) {
+      String lower = name.toLowerCase();
+      // call frame information, which runs to one directive per row of the unwind table
+      if (lower.startsWith(".cfi_")) {
+         return true;
+      }
+      for (int i = 0; i < METADATA_DIRECTIVES.length; i++) {
+         if (lower.equals(METADATA_DIRECTIVES[i])) {
+            return true;
+         }
+      }
+      return false;
+   }
+
+   /**
+    * Assembler modes a C compiler turns on and off around the code it emits. None of
+    * them describes the program, and none of them is something this assembler does
+    * differently, so each is inert. A ".set" that assigns a symbol is not one of
+    * these and still reports that it was ignored.
+    **/
+   private static final String[] ASSEMBLER_MODE_SWITCHES = {
+         "reorder", "noreorder", "macro", "nomacro", "at", "noat",
+         "mips16", "nomips16", "micromips", "nomicromips", "volatile", "novolatile",
+   };
+
+   private static boolean isAssemblerModeSwitch(TokenList tokens) {
+      if (tokens.size() != 2) {
+         return false;
+      }
+      String mode = tokens.get(1).getValue().toLowerCase();
+      for (int i = 0; i < ASSEMBLER_MODE_SWITCHES.length; i++) {
+         if (mode.equals(ASSEMBLER_MODE_SWITCHES[i])) {
+            return true;
+         }
+      }
+      return false;
+   }
+
    private boolean tokenListBeginsWithLabel(TokenList tokens) {
       // 2-July-2010. DPS. Remove prohibition of operator names as labels
       if (tokens.size() < 2)
@@ -747,7 +834,7 @@ public class Assembler {
    // out.
    private void executeDirective(TokenList tokens) {
       Token token = tokens.get(0);
-      Directives direct = Directives.matchDirective(token.getValue());
+      Directives direct = Directives.canonical(Directives.matchDirective(token.getValue()));
       if (Globals.debug)
          System.out.println("line " + token.getSourceLine() + " is directive " + direct);
       if (direct == null) {
@@ -807,6 +894,63 @@ public class Assembler {
       } else if (inMacroSegment) {
          // should not parse lines even directives in macro segment
          return;
+      } else if (direct == Directives.RDATA || direct == Directives.BSS) {
+         // this simulator has one data segment, which already reads as zero
+         this.inDataSegment = true;
+         this.autoAlign = true;
+         this.dataAddress.setAddressSpace(this.dataAddress.USER);
+      } else if (direct == Directives.SECTION) {
+         executeSectionDirective(tokens);
+      } else if (direct == Directives.BALIGN) {
+         if (tokens.size() != 2) {
+            errors.add(new ErrorMessage(token.getSourceMIPSprogram(), token.getSourceLine(),
+                  token.getStartPos(), "\"" + token.getValue() + "\" requires one operand"));
+            return;
+         }
+         if (!TokenTypes.isIntegerTokenType(tokens.get(1).getType())
+               || Binary.stringToInt(tokens.get(1).getValue()) <= 0) {
+            errors.add(new ErrorMessage(token.getSourceMIPSprogram(), token.getSourceLine(),
+                  token.getStartPos(), "\"" + token.getValue() + "\" requires a positive integer"));
+            return;
+         }
+         this.dataAddress.set(this.alignToBoundary(this.dataAddress.get(),
+               Binary.stringToInt(tokens.get(1).getValue())));
+      } else if (direct == Directives.COMM || direct == Directives.LCOMM) {
+         // A C compiler emits these for a variable it never initializes. The bytes come
+         // out of the data segment whichever section is current, and the current section
+         // is left alone, which is what the GNU assembler does.
+         if (tokens.size() < 3 || tokens.size() > 4) {
+            errors.add(new ErrorMessage(token.getSourceMIPSprogram(), token.getSourceLine(),
+                  token.getStartPos(), "\"" + token.getValue()
+                        + "\" requires a symbol and a size in bytes, and takes an optional alignment"));
+            return;
+         }
+         if (!TokenTypes.isIntegerTokenType(tokens.get(2).getType())
+               || Binary.stringToInt(tokens.get(2).getValue()) < 0) {
+            errors.add(new ErrorMessage(token.getSourceMIPSprogram(), token.getSourceLine(),
+                  token.getStartPos(), "\"" + token.getValue()
+                        + "\" requires a non-negative integer size"));
+            return;
+         }
+         int commAlignment = DataTypes.WORD_SIZE;
+         if (tokens.size() == 4) {
+            if (!TokenTypes.isIntegerTokenType(tokens.get(3).getType())
+                  || Binary.stringToInt(tokens.get(3).getValue()) <= 0) {
+               errors.add(new ErrorMessage(token.getSourceMIPSprogram(), token.getSourceLine(),
+                     token.getStartPos(), "\"" + token.getValue()
+                           + "\" requires a positive integer alignment"));
+               return;
+            }
+            commAlignment = Binary.stringToInt(tokens.get(3).getValue());
+         }
+         this.dataAddress.set(this.alignToBoundary(this.dataAddress.get(), commAlignment));
+         fileCurrentlyBeingAssembled.getLocalSymbolTable().addSymbol(tokens.get(1),
+               this.dataAddress.get(), Symbol.DATA_SYMBOL, this.errors);
+         this.dataAddress.increment(Binary.stringToInt(tokens.get(2).getValue()));
+         if (direct == Directives.COMM) {
+            // .comm is visible to other files, which is what .globl already arranges
+            globalDeclarationList.add(tokens.get(1));
+         }
       } else if (direct == Directives.DATA || direct == Directives.KDATA) {
          this.inDataSegment = true;
          this.autoAlign = true;
@@ -836,6 +980,14 @@ public class Assembler {
             storeStrings(tokens, direct, errors);
          }
       } else if (direct == Directives.ALIGN) {
+         if (!this.inDataSegment && tokens.size() == 2
+               && TokenTypes.isIntegerTokenType(tokens.get(1).getType())
+               && Binary.stringToInt(tokens.get(1).getValue()) >= 1
+               && Binary.stringToInt(tokens.get(1).getValue()) <= 2) {
+            // instructions already sit on a word boundary, so this is asking for
+            // nothing that is not already true
+            return;
+         }
          if (passesDataSegmentCheck(token)) {
             if (tokens.size() != 2) {
                errors.add(new ErrorMessage(token.getSourceMIPSprogram(),
@@ -898,9 +1050,11 @@ public class Assembler {
             this.externAddress += size;
          }
       } else if (direct == Directives.SET) {
-         errors.add(new ErrorMessage(ErrorMessage.WARNING, token.getSourceMIPSprogram(), token
-               .getSourceLine(), token.getStartPos(),
-               "MARS currently ignores the .set directive."));
+         if (!isAssemblerModeSwitch(tokens)) {
+            errors.add(new ErrorMessage(ErrorMessage.WARNING, token.getSourceMIPSprogram(), token
+                  .getSourceLine(), token.getStartPos(),
+                  "MARS currently ignores the .set directive."));
+         }
       } else if (direct == Directives.GLOBL) {
          if (tokens.size() < 2) {
             errors.add(new ErrorMessage(token.getSourceMIPSprogram(), token.getSourceLine(),

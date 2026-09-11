@@ -597,12 +597,34 @@ public class Tokenizer {
          value = preprocessCharacterLiteral(value);
       TokenTypes type = TokenTypes.matchTokenType(value);
       if (type == TokenTypes.ERROR) {
-         errors.add(new ErrorMessage(program, line, tokenStartPos,
-               theLine + "\nInvalid language element: " + value));
+         if (lineStartsWithIgnoredDirective(tokenList)) {
+            // The line is going to be discarded whole, so whatever this is cannot
+            // reach the program. A C compiler writes plenty of it: ".size f, .-f"
+            // and ".module fp=xx" are not MIPS at all, and rejecting them would
+            // fail the file before assembly ever starts.
+            type = TokenTypes.TAG;
+         } else {
+            errors.add(new ErrorMessage(program, line, tokenStartPos,
+                  theLine + "\nInvalid language element: " + value));
+         }
       }
       Token toke = new Token(type, value, program, line, tokenStartPos);
       tokenList.add(toke);
       return;
+   }
+
+   // True when this line opened with something spelled like a directive that MARS
+   // does not implement, which the assembler ignores in its entirety. A label is
+   // not one of those, even though a label may also begin with a dot.
+   private boolean lineStartsWithIgnoredDirective(TokenList tokenList) {
+      if (tokenList.size() == 0) {
+         return false;
+      }
+      Token first = tokenList.get(0);
+      if (first.getType() != TokenTypes.IDENTIFIER || first.getValue().charAt(0) != '.') {
+         return false;
+      }
+      return tokenList.size() < 2 || tokenList.get(1).getType() != TokenTypes.COLON;
    }
 
    // If passed a candidate character literal, attempt to translate it into integer

@@ -324,6 +324,12 @@ public class Simulator extends Observable {
 
             int pc = 0; // added: 7/26/06 (explanation above)
 
+            // Backstepping cannot be switched on or off while a run is in flight, so the flag is
+            // resolved once rather than walked down from Globals to the program's BackStepper on
+            // every instruction.
+            boolean backSteppingEnabled = Globals.getSettingsProperties().getBackSteppingEnabled();
+            BackStepper backStepper = backSteppingEnabled ? Globals.program.getBackStepper() : null;
+
             while (statement != null) {
                 pc = RegisterFile.getProgramCounter(); // added: 7/26/06 (explanation above)
                 RegisterFile.incrementPC();
@@ -348,8 +354,8 @@ public class Simulator extends Observable {
                         instruction.getSimulationCode().simulate(statement);
 
                         // IF statement added 7/26/06 (explanation above)
-                        if (Globals.getSettingsProperties().getBackSteppingEnabled()) {
-                            Globals.program.getBackStepper().addDoNothing(pc);
+                        if (backSteppingEnabled) {
+                            backStepper.addDoNothing(pc);
                         }
                     } catch (ProcessingException pe) {
                         if (pe.errors() == null) {

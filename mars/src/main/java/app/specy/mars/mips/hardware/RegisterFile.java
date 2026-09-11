@@ -96,15 +96,13 @@ public class RegisterFile {
       int old = 0;
       if (num == 0) {
          // System.out.println("You can not change the value of the zero register.");
-      } else {
-         for (int i = 0; i < regFile.length; i++) {
-            if (regFile[i].getNumber() == num) {
-               old = (Globals.getSettingsProperties().getBackSteppingEnabled())
-                     ? Globals.program.getBackStepper().addRegisterFileRestore(num, regFile[i].setValue(val))
-                     : regFile[i].setValue(val);
-               break;
-            }
-         }
+      } else if (num > 0 && num < regFile.length) {
+         // regFile is built in register-number order, so the entry is at its own number; the
+         // upstream scan compared all 32 to find it, once or twice per instruction.
+         Register register = regFile[num];
+         old = (Globals.getSettingsProperties().getBackSteppingEnabled())
+               ? Globals.program.getBackStepper().addRegisterFileRestore(num, register.setValue(val))
+               : register.setValue(val);
       }
       if (num == 33) {// updates the hi register
          old = (Globals.getSettingsProperties().getBackSteppingEnabled())

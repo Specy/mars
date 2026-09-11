@@ -544,6 +544,18 @@ public class InstructionSet {
                             }
                         }));
         instructionList.add(
+                new BasicInstruction("rotr $t1,$t2,10",
+                        "Rotate right : Sets $t1 = $t2 rotated right by immediate (0-31 bits). Unlike 'srl', bits shifted off the right re-enter on the left rather than being discarded, so no information is lost. Encoded as 'srl' with bit 21 set.",
+                        BasicInstructionFormat.R_FORMAT,
+                        "000000 00001 sssss fffff ttttt 000010",
+                        new SimulationCode() {
+                            public void simulate(ProgramStatement statement) throws ProcessingException {
+                                int[] operands = statement.getOperands();
+                                RegisterFile.updateRegister(operands[0],
+                                        Integer.rotateRight(RegisterFile.getValue(operands[1]), operands[2]));
+                            }
+                        }));
+        instructionList.add(
                 new BasicInstruction("sra $t1,$t2,10",
                         "Shift right arithmetic : Sets $t1 = $t2 >> immediate (0-31 bits). Vacated bits on the left are filled with copies of the sign bit, preserving the sign of negative numbers. Shifting right by n is equivalent to signed division by 2^n rounding toward negative infinity.",
                         BasicInstructionFormat.R_FORMAT,
@@ -580,6 +592,19 @@ public class InstructionSet {
                                 // Mask all but low 5 bits of register containing shamt.Use ">>>" to zero-fill.
                                 RegisterFile.updateRegister(operands[0],
                                         RegisterFile.getValue(operands[1]) >>> (RegisterFile.getValue(operands[2]) & 0x0000001F));
+                            }
+                        }));
+        instructionList.add(
+                new BasicInstruction("rotrv $t1,$t2,$t3",
+                        "Rotate right variable : Sets $t1 = $t2 rotated right by ($t3 & 31). Like 'rotr' but the rotate amount comes from the lowest 5 bits of register $t3 rather than an immediate constant.",
+                        BasicInstructionFormat.R_FORMAT,
+                        "000000 ttttt sssss fffff 00001 000110",
+                        new SimulationCode() {
+                            public void simulate(ProgramStatement statement) throws ProcessingException {
+                                int[] operands = statement.getOperands();
+                                RegisterFile.updateRegister(operands[0],
+                                        Integer.rotateRight(RegisterFile.getValue(operands[1]),
+                                                RegisterFile.getValue(operands[2]) & 0x0000001F));
                             }
                         }));
         instructionList.add(
@@ -1045,6 +1070,46 @@ public class InstructionSet {
                             }
                         }));
         instructionList.add(
+                new BasicInstruction("sync",
+                        "Synchronize shared memory : Orders the loads and stores around it, so that another processor observes them in program order. This simulator runs a single processor and completes every access immediately, so there is nothing to reorder and 'sync' does nothing. It is accepted so that compiler output and real-world code assemble unchanged.",
+                        BasicInstructionFormat.R_FORMAT,
+                        "000000 00000 00000 00000 00000 001111",
+                        new SimulationCode() {
+                            public void simulate(ProgramStatement statement) throws ProcessingException {
+                                // nothing to do, see the description
+                            }
+                        }));
+        instructionList.add(
+                new BasicInstruction("sync 1",
+                        "Synchronize shared memory (typed) : Like 'sync', but the operand selects which accesses to order. This simulator completes every access immediately, so the type is ignored and the instruction does nothing.",
+                        BasicInstructionFormat.R_FORMAT,
+                        "000000 00000 00000 00000 fffff 001111",
+                        new SimulationCode() {
+                            public void simulate(ProgramStatement statement) throws ProcessingException {
+                                // nothing to do, see the description
+                            }
+                        }));
+        instructionList.add(
+                new BasicInstruction("pref 1,-100($t2)",
+                        "Prefetch : Hints that the data at address ($t2 + offset) will be needed soon, so the hardware can begin moving it into cache. The first operand is the hint type. A prefetch is only ever a hint and never changes what a program computes; this simulator has no cache, so it does nothing. It is accepted so that compiler output assembles unchanged.",
+                        BasicInstructionFormat.I_FORMAT,
+                        "110011 ttttt fffff ssssssssssssssss",
+                        new SimulationCode() {
+                            public void simulate(ProgramStatement statement) throws ProcessingException {
+                                // nothing to do, see the description
+                            }
+                        }));
+        instructionList.add(
+                new BasicInstruction("wait",
+                        "Wait for interrupt : Halts the processor until an interrupt arrives. This simulator delivers no interrupts, so there would be nothing to wake it; rather than hang, 'wait' does nothing and execution continues. It is accepted so that kernel-style code assembles unchanged.",
+                        BasicInstructionFormat.R_FORMAT,
+                        "010000 1 0000000000000000000 100000",
+                        new SimulationCode() {
+                            public void simulate(ProgramStatement statement) throws ProcessingException {
+                                // nothing to do, see the description
+                            }
+                        }));
+        instructionList.add(
                 new BasicInstruction("j target",
                         "Jump unconditionally : Transfers execution to 'target'. The destination is encoded as a 26-bit word address; the upper 4 bits of PC are combined with this value, so the target must be in the same 256 MB region as the instruction following the jump.",
                         BasicInstructionFormat.J_FORMAT,
@@ -1276,6 +1341,41 @@ public class InstructionSet {
                                     bitPosition--;
                                 }
                                 RegisterFile.updateRegister(operands[0], leadingZeros);
+                            }
+                        }));
+        instructionList.add(
+                new BasicInstruction("seb $t1,$t2",
+                        "Sign extend byte : Copies the low 8 bits of $t2 into $t1, with bit 7 replicated through the upper 24 bits. Turns a byte loaded with 'lbu', or one extracted by shifting, back into a signed value.",
+                        BasicInstructionFormat.R_FORMAT,
+                        "011111 00000 sssss fffff 10000 100000",
+                        new SimulationCode() {
+                            public void simulate(ProgramStatement statement) throws ProcessingException {
+                                int[] operands = statement.getOperands();
+                                RegisterFile.updateRegister(operands[0], (byte) RegisterFile.getValue(operands[1]));
+                            }
+                        }));
+        instructionList.add(
+                new BasicInstruction("seh $t1,$t2",
+                        "Sign extend halfword : Copies the low 16 bits of $t2 into $t1, with bit 15 replicated through the upper 16 bits. Turns a halfword loaded with 'lhu' back into a signed value.",
+                        BasicInstructionFormat.R_FORMAT,
+                        "011111 00000 sssss fffff 11000 100000",
+                        new SimulationCode() {
+                            public void simulate(ProgramStatement statement) throws ProcessingException {
+                                int[] operands = statement.getOperands();
+                                RegisterFile.updateRegister(operands[0], (short) RegisterFile.getValue(operands[1]));
+                            }
+                        }));
+        instructionList.add(
+                new BasicInstruction("wsbh $t1,$t2",
+                        "Word swap bytes within halfwords : Sets $t1 to $t2 with the two bytes of each halfword exchanged, so 0xAABBCCDD becomes 0xBBAADDCC. Combined with 'rotr $t1,$t1,16' this reverses all four bytes, converting between little and big endian.",
+                        BasicInstructionFormat.R_FORMAT,
+                        "011111 00000 sssss fffff 00010 100000",
+                        new SimulationCode() {
+                            public void simulate(ProgramStatement statement) throws ProcessingException {
+                                int[] operands = statement.getOperands();
+                                int value = RegisterFile.getValue(operands[1]);
+                                RegisterFile.updateRegister(operands[0],
+                                        ((value & 0x00FF00FF) << 8) | ((value >>> 8) & 0x00FF00FF));
                             }
                         }));
         instructionList.add(
@@ -1841,228 +1941,7 @@ public class InstructionSet {
 
                             }
                         }));
-        instructionList.add(
-                new BasicInstruction("c.eq.s $f0,$f1",
-                        "FP compare equal (single) : Sets FP condition flag 0 to true if $f0 == $f1 (single-precision), false otherwise. Use 'bc1t' to branch when equal, or 'bc1f' to branch when not equal.",
-                        BasicInstructionFormat.R_FORMAT,
-                        "010001 10000 sssss fffff 00000 110010",
-                        new SimulationCode() {
-                            public void simulate(ProgramStatement statement) throws ProcessingException {
-                                int[] operands = statement.getOperands();
-                                float op1 = Float.intBitsToFloat(Coprocessor1.getValue(operands[0]));
-                                float op2 = Float.intBitsToFloat(Coprocessor1.getValue(operands[1]));
-                                if (op1 == op2)
-                                    Coprocessor1.setConditionFlag(0);
-                                else
-                                    Coprocessor1.clearConditionFlag(0);
-                            }
-                        }));
-        instructionList.add(
-                new BasicInstruction("c.eq.s 1,$f0,$f1",
-                        "FP compare equal (single, flagged) : Sets FP condition flag N (specified by the first operand) to true if $f0 == $f1 (single-precision), false otherwise. Allows multiple simultaneous FP comparisons using different flags.",
-                        BasicInstructionFormat.R_FORMAT,
-                        "010001 10000 ttttt sssss fff 00 11 0010",
-                        new SimulationCode() {
-                            public void simulate(ProgramStatement statement) throws ProcessingException {
-                                int[] operands = statement.getOperands();
-                                float op1 = Float.intBitsToFloat(Coprocessor1.getValue(operands[1]));
-                                float op2 = Float.intBitsToFloat(Coprocessor1.getValue(operands[2]));
-                                if (op1 == op2)
-                                    Coprocessor1.setConditionFlag(operands[0]);
-                                else
-                                    Coprocessor1.clearConditionFlag(operands[0]);
-                            }
-                        }));
-        instructionList.add(
-                new BasicInstruction("c.le.s $f0,$f1",
-                        "FP compare less or equal (single) : Sets FP condition flag 0 to true if $f0 <= $f1 (single-precision), false otherwise.",
-                        BasicInstructionFormat.R_FORMAT,
-                        "010001 10000 sssss fffff 00000 111110",
-                        new SimulationCode() {
-                            public void simulate(ProgramStatement statement) throws ProcessingException {
-                                int[] operands = statement.getOperands();
-                                float op1 = Float.intBitsToFloat(Coprocessor1.getValue(operands[0]));
-                                float op2 = Float.intBitsToFloat(Coprocessor1.getValue(operands[1]));
-                                if (op1 <= op2)
-                                    Coprocessor1.setConditionFlag(0);
-                                else
-                                    Coprocessor1.clearConditionFlag(0);
-                            }
-                        }));
-        instructionList.add(
-                new BasicInstruction("c.le.s 1,$f0,$f1",
-                        "FP compare less or equal (single, flagged) : Sets FP condition flag N (specified by the first operand) to true if $f0 <= $f1 (single-precision), false otherwise.",
-                        BasicInstructionFormat.R_FORMAT,
-                        "010001 10000 ttttt sssss fff 00 111110",
-                        new SimulationCode() {
-                            public void simulate(ProgramStatement statement) throws ProcessingException {
-                                int[] operands = statement.getOperands();
-                                float op1 = Float.intBitsToFloat(Coprocessor1.getValue(operands[1]));
-                                float op2 = Float.intBitsToFloat(Coprocessor1.getValue(operands[2]));
-                                if (op1 <= op2)
-                                    Coprocessor1.setConditionFlag(operands[0]);
-                                else
-                                    Coprocessor1.clearConditionFlag(operands[0]);
-                            }
-                        }));
-        instructionList.add(
-                new BasicInstruction("c.lt.s $f0,$f1",
-                        "FP compare less than (single) : Sets FP condition flag 0 to true if $f0 < $f1 (single-precision), false otherwise.",
-                        BasicInstructionFormat.R_FORMAT,
-                        "010001 10000 sssss fffff 00000 111100",
-                        new SimulationCode() {
-                            public void simulate(ProgramStatement statement) throws ProcessingException {
-                                int[] operands = statement.getOperands();
-                                float op1 = Float.intBitsToFloat(Coprocessor1.getValue(operands[0]));
-                                float op2 = Float.intBitsToFloat(Coprocessor1.getValue(operands[1]));
-                                if (op1 < op2)
-                                    Coprocessor1.setConditionFlag(0);
-                                else
-                                    Coprocessor1.clearConditionFlag(0);
-                            }
-                        }));
-        instructionList.add(
-                new BasicInstruction("c.lt.s 1,$f0,$f1",
-                        "FP compare less than (single, flagged) : Sets FP condition flag N (specified by the first operand) to true if $f0 < $f1 (single-precision), false otherwise.",
-                        BasicInstructionFormat.R_FORMAT,
-                        "010001 10000 ttttt sssss fff 00 111100",
-                        new SimulationCode() {
-                            public void simulate(ProgramStatement statement) throws ProcessingException {
-                                int[] operands = statement.getOperands();
-                                float op1 = Float.intBitsToFloat(Coprocessor1.getValue(operands[1]));
-                                float op2 = Float.intBitsToFloat(Coprocessor1.getValue(operands[2]));
-                                if (op1 < op2)
-                                    Coprocessor1.setConditionFlag(operands[0]);
-                                else
-                                    Coprocessor1.clearConditionFlag(operands[0]);
-                            }
-                        }));
-        instructionList.add(
-                new BasicInstruction("c.eq.d $f2,$f4",
-                        "FP compare equal (double) : Sets FP condition flag 0 to true if $f2 == $f4 (double-precision), false otherwise. Both register numbers must be even. Use 'bc1t'/'bc1f' to branch on the result.",
-                        BasicInstructionFormat.R_FORMAT,
-                        "010001 10001 sssss fffff 00000 110010",
-                        new SimulationCode() {
-                            public void simulate(ProgramStatement statement) throws ProcessingException {
-                                int[] operands = statement.getOperands();
-                                if (operands[0] % 2 == 1 || operands[1] % 2 == 1) {
-                                    throw new ProcessingException(statement, "both registers must be even-numbered");
-                                }
-                                double op1 = Double.longBitsToDouble(Binary.twoIntsToLong(
-                                        Coprocessor1.getValue(operands[0] + 1), Coprocessor1.getValue(operands[0])));
-                                double op2 = Double.longBitsToDouble(Binary.twoIntsToLong(
-                                        Coprocessor1.getValue(operands[1] + 1), Coprocessor1.getValue(operands[1])));
-                                if (op1 == op2)
-                                    Coprocessor1.setConditionFlag(0);
-                                else
-                                    Coprocessor1.clearConditionFlag(0);
-                            }
-                        }));
-        instructionList.add(
-                new BasicInstruction("c.eq.d 1,$f2,$f4",
-                        "FP compare equal (double, flagged) : Sets FP condition flag N (specified by the first operand) to true if $f2 == $f4 (double-precision), false otherwise. Both register numbers must be even.",
-                        BasicInstructionFormat.R_FORMAT,
-                        "010001 10001 ttttt sssss fff 00 110010",
-                        new SimulationCode() {
-                            public void simulate(ProgramStatement statement) throws ProcessingException {
-                                int[] operands = statement.getOperands();
-                                if (operands[1] % 2 == 1 || operands[2] % 2 == 1) {
-                                    throw new ProcessingException(statement, "both registers must be even-numbered");
-                                }
-                                double op1 = Double.longBitsToDouble(Binary.twoIntsToLong(
-                                        Coprocessor1.getValue(operands[1] + 1), Coprocessor1.getValue(operands[1])));
-                                double op2 = Double.longBitsToDouble(Binary.twoIntsToLong(
-                                        Coprocessor1.getValue(operands[2] + 1), Coprocessor1.getValue(operands[2])));
-                                if (op1 == op2)
-                                    Coprocessor1.setConditionFlag(operands[0]);
-                                else
-                                    Coprocessor1.clearConditionFlag(operands[0]);
-                            }
-                        }));
-        instructionList.add(
-                new BasicInstruction("c.le.d $f2,$f4",
-                        "FP compare less or equal (double) : Sets FP condition flag 0 to true if $f2 <= $f4 (double-precision), false otherwise. Both register numbers must be even.",
-                        BasicInstructionFormat.R_FORMAT,
-                        "010001 10001 sssss fffff 00000 111110",
-                        new SimulationCode() {
-                            public void simulate(ProgramStatement statement) throws ProcessingException {
-                                int[] operands = statement.getOperands();
-                                if (operands[0] % 2 == 1 || operands[1] % 2 == 1) {
-                                    throw new ProcessingException(statement, "both registers must be even-numbered");
-                                }
-                                double op1 = Double.longBitsToDouble(Binary.twoIntsToLong(
-                                        Coprocessor1.getValue(operands[0] + 1), Coprocessor1.getValue(operands[0])));
-                                double op2 = Double.longBitsToDouble(Binary.twoIntsToLong(
-                                        Coprocessor1.getValue(operands[1] + 1), Coprocessor1.getValue(operands[1])));
-                                if (op1 <= op2)
-                                    Coprocessor1.setConditionFlag(0);
-                                else
-                                    Coprocessor1.clearConditionFlag(0);
-                            }
-                        }));
-        instructionList.add(
-                new BasicInstruction("c.le.d 1,$f2,$f4",
-                        "FP compare less or equal (double, flagged) : Sets FP condition flag N (specified by the first operand) to true if $f2 <= $f4 (double-precision), false otherwise. Both register numbers must be even.",
-                        BasicInstructionFormat.R_FORMAT,
-                        "010001 10001 ttttt sssss fff 00 111110",
-                        new SimulationCode() {
-                            public void simulate(ProgramStatement statement) throws ProcessingException {
-                                int[] operands = statement.getOperands();
-                                if (operands[1] % 2 == 1 || operands[2] % 2 == 1) {
-                                    throw new ProcessingException(statement, "both registers must be even-numbered");
-                                }
-                                double op1 = Double.longBitsToDouble(Binary.twoIntsToLong(
-                                        Coprocessor1.getValue(operands[1] + 1), Coprocessor1.getValue(operands[1])));
-                                double op2 = Double.longBitsToDouble(Binary.twoIntsToLong(
-                                        Coprocessor1.getValue(operands[2] + 1), Coprocessor1.getValue(operands[2])));
-                                if (op1 <= op2)
-                                    Coprocessor1.setConditionFlag(operands[0]);
-                                else
-                                    Coprocessor1.clearConditionFlag(operands[0]);
-                            }
-                        }));
-        instructionList.add(
-                new BasicInstruction("c.lt.d $f2,$f4",
-                        "FP compare less than (double) : Sets FP condition flag 0 to true if $f2 < $f4 (double-precision), false otherwise. Both register numbers must be even.",
-                        BasicInstructionFormat.R_FORMAT,
-                        "010001 10001 sssss fffff 00000 111100",
-                        new SimulationCode() {
-                            public void simulate(ProgramStatement statement) throws ProcessingException {
-                                int[] operands = statement.getOperands();
-                                if (operands[0] % 2 == 1 || operands[1] % 2 == 1) {
-                                    throw new ProcessingException(statement, "both registers must be even-numbered");
-                                }
-                                double op1 = Double.longBitsToDouble(Binary.twoIntsToLong(
-                                        Coprocessor1.getValue(operands[0] + 1), Coprocessor1.getValue(operands[0])));
-                                double op2 = Double.longBitsToDouble(Binary.twoIntsToLong(
-                                        Coprocessor1.getValue(operands[1] + 1), Coprocessor1.getValue(operands[1])));
-                                if (op1 < op2)
-                                    Coprocessor1.setConditionFlag(0);
-                                else
-                                    Coprocessor1.clearConditionFlag(0);
-                            }
-                        }));
-        instructionList.add(
-                new BasicInstruction("c.lt.d 1,$f2,$f4",
-                        "FP compare less than (double, flagged) : Sets FP condition flag N (specified by the first operand) to true if $f2 < $f4 (double-precision), false otherwise. Both register numbers must be even.",
-                        BasicInstructionFormat.R_FORMAT,
-                        "010001 10001 ttttt sssss fff 00 111100",
-                        new SimulationCode() {
-                            public void simulate(ProgramStatement statement) throws ProcessingException {
-                                int[] operands = statement.getOperands();
-                                if (operands[1] % 2 == 1 || operands[2] % 2 == 1) {
-                                    throw new ProcessingException(statement, "both registers must be even-numbered");
-                                }
-                                double op1 = Double.longBitsToDouble(Binary.twoIntsToLong(
-                                        Coprocessor1.getValue(operands[1] + 1), Coprocessor1.getValue(operands[1])));
-                                double op2 = Double.longBitsToDouble(Binary.twoIntsToLong(
-                                        Coprocessor1.getValue(operands[2] + 1), Coprocessor1.getValue(operands[2])));
-                                if (op1 < op2)
-                                    Coprocessor1.setConditionFlag(operands[0]);
-                                else
-                                    Coprocessor1.clearConditionFlag(operands[0]);
-                            }
-                        }));
+        addFloatingPointCompares();
         instructionList.add(
                 new BasicInstruction("abs.s $f0,$f1",
                         "Floating-point absolute value (single) : Sets $f0 to the absolute value of $f1 (single-precision). Works by clearing the sign bit. Does not raise exceptions for NaN or infinity.",
@@ -2410,6 +2289,28 @@ public class InstructionSet {
                             public void simulate(ProgramStatement statement) throws ProcessingException {
                                 int[] operands = statement.getOperands();
                                 Coprocessor1.updateRegister(operands[1], RegisterFile.getValue(operands[0]));
+                            }
+                        }));
+        instructionList.add(
+                new BasicInstruction("cfc1 $t1,$f31",
+                        "Move control word from FPU : Copies an FPU control register into integer register $t1. Register 31 is FCSR and register 25 is FCCR, both of which report the condition codes set by the 'c.eq.s', 'c.lt.s' family. Only the condition codes are modelled here; the rounding mode and exception fields read as 0.",
+                        BasicInstructionFormat.R_FORMAT,
+                        "010001 00010 fffff sssss 00000 000000",
+                        new SimulationCode() {
+                            public void simulate(ProgramStatement statement) throws ProcessingException {
+                                int[] operands = statement.getOperands();
+                                RegisterFile.updateRegister(operands[0], Coprocessor1.getControlValue(operands[1]));
+                            }
+                        }));
+        instructionList.add(
+                new BasicInstruction("ctc1 $t1,$f31",
+                        "Move control word to FPU : Copies integer register $t1 into an FPU control register. Register 31 is FCSR and register 25 is FCCR. Only the condition code bits take effect; the rounding mode and exception fields are ignored because this simulator always rounds to nearest and does not track FP exceptions.",
+                        BasicInstructionFormat.R_FORMAT,
+                        "010001 00110 fffff sssss 00000 000000",
+                        new SimulationCode() {
+                            public void simulate(ProgramStatement statement) throws ProcessingException {
+                                int[] operands = statement.getOperands();
+                                Coprocessor1.setControlValue(operands[1], RegisterFile.getValue(operands[0]));
                             }
                         }));
         instructionList.add(
@@ -2788,6 +2689,119 @@ public class InstructionSet {
     /*
      * METHOD TO ADD PSEUDO-INSTRUCTIONS
      */
+
+    /**
+     * Mnemonics of the 16 floating point comparisons, indexed by the condition code
+     * that occupies the low four bits of the instruction.
+     */
+    private static final String[] FP_CONDITION_NAMES = {
+            "f", "un", "eq", "ueq", "olt", "ult", "ole", "ule"
+,            "sf", "ngle", "seq", "ngl", "lt", "nge", "le", "ngt"
+    };
+
+    /**
+     * What each comparison tests, phrased to complete "sets the flag to true if ...".
+     */
+    private static final String[] FP_CONDITION_TESTS = {
+            "never; this comparison is always false",
+            "the two operands are unordered, which is the case when either one is NaN",
+            "the two operands are equal",
+            "the two operands are unordered or equal",
+            "both operands are ordered and the first is less than the second",
+            "the two operands are unordered, or the first is less than the second",
+            "both operands are ordered and the first is less than or equal to the second",
+            "the two operands are unordered, or the first is less than or equal to the second",
+            "never; this comparison is always false",
+            "the two operands are unordered; the name reads as not greater than, less than or equal",
+            "the two operands are equal",
+            "the two operands are unordered or equal; the name reads as not greater than or less than",
+            "the first operand is less than the second",
+            "the two operands are unordered, or the first is less than the second; the name reads as not greater than or equal",
+            "the first operand is less than or equal to the second",
+            "the two operands are unordered, or the first is less than or equal to the second; the name reads as not greater than",
+    };
+
+    /**
+     * Adds every c.cond.fmt comparison: 16 conditions, in single and double
+     * precision, each in the form that writes condition flag 0 and the form that
+     * names the flag to write.
+     * <p>
+     * All 16 are the same test driven by three bits of the condition code. Bit 2
+     * asks "less", bit 1 asks "equal" and bit 0 asks "unordered", and the
+     * comparison is true when any bit that is set holds of the operands. Bit 3
+     * selects the signalling form, which in hardware differs only by raising the
+     * Invalid exception on a NaN; this simulator does not track FP exceptions, so
+     * a signalling comparison computes the same answer as its quiet counterpart.
+     */
+    private void addFloatingPointCompares() {
+        for (int code = 0; code < FP_CONDITION_NAMES.length; code++) {
+            addFloatingPointCompare(code, false, false);
+            addFloatingPointCompare(code, false, true);
+            addFloatingPointCompare(code, true, false);
+            addFloatingPointCompare(code, true, true);
+        }
+    }
+
+    private void addFloatingPointCompare(int code, final boolean isDouble, final boolean namesFlag) {
+        final boolean less = (code & 0x4) != 0;
+        final boolean equal = (code & 0x2) != 0;
+        final boolean unordered = (code & 0x1) != 0;
+        // the registers start after the flag number when the source names one
+        final int first = namesFlag ? 1 : 0;
+
+        String precision = isDouble ? "double" : "single";
+        String registers = isDouble ? "$f2,$f4" : "$f0,$f1";
+        String example = "c." + FP_CONDITION_NAMES[code] + (isDouble ? ".d " : ".s ")
+                + (namesFlag ? "1," : "") + registers;
+        String mask = "010001 " + (isDouble ? "10001 " : "10000 ")
+                + (namesFlag ? "ttttt sssss fff 00 11 " : "sssss fffff 00000 11 ")
+                + Binary.intToBinaryString(code, 4);
+        String flagged = namesFlag
+                ? "Sets FP condition flag N, named by the first operand, "
+                : "Sets FP condition flag 0 ";
+        String description = "FP compare " + FP_CONDITION_NAMES[code] + " (" + precision
+                + (namesFlag ? ", flagged" : "") + ") : " + flagged + "to true if "
+                + FP_CONDITION_TESTS[code] + ", false otherwise."
+                + (isDouble ? " Both register numbers must be even." : "")
+                + (code >= 8 ? " This is the signalling form, which behaves like 'c."
+                        + FP_CONDITION_NAMES[code - 8] + "' here because FP exceptions are not tracked." : "")
+                + " Use 'bc1t' or 'bc1f' to branch on the result.";
+
+        instructionList.add(
+                new BasicInstruction(example, description, BasicInstructionFormat.R_FORMAT, mask,
+                        new SimulationCode() {
+                            public void simulate(ProgramStatement statement) throws ProcessingException {
+                                int[] operands = statement.getOperands();
+                                double op1;
+                                double op2;
+                                if (isDouble) {
+                                    if (operands[first] % 2 == 1 || operands[first + 1] % 2 == 1) {
+                                        throw new ProcessingException(statement,
+                                                "both registers must be even-numbered");
+                                    }
+                                    op1 = Double.longBitsToDouble(Binary.twoIntsToLong(
+                                            Coprocessor1.getValue(operands[first] + 1),
+                                            Coprocessor1.getValue(operands[first])));
+                                    op2 = Double.longBitsToDouble(Binary.twoIntsToLong(
+                                            Coprocessor1.getValue(operands[first + 1] + 1),
+                                            Coprocessor1.getValue(operands[first + 1])));
+                                } else {
+                                    op1 = Float.intBitsToFloat(Coprocessor1.getValue(operands[first]));
+                                    op2 = Float.intBitsToFloat(Coprocessor1.getValue(operands[first + 1]));
+                                }
+                                // a NaN on either side makes the pair unordered, which is the only
+                                // case the three condition bits can disagree about
+                                boolean isUnordered = Double.isNaN(op1) || Double.isNaN(op2);
+                                int flag = namesFlag ? operands[0] : 0;
+                                if ((less && op1 < op2) || (equal && op1 == op2)
+                                        || (unordered && isUnordered)) {
+                                    Coprocessor1.setConditionFlag(flag);
+                                } else {
+                                    Coprocessor1.clearConditionFlag(flag);
+                                }
+                            }
+                        }));
+    }
 
     private void addPseudoInstructions() {
 
