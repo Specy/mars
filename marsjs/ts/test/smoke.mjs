@@ -12,7 +12,7 @@ if (!existsSync(fileURLToPath(dist))) {
 }
 
 const packageExports = await import(dist)
-const { MIPS, makeMipsFromFiles, registerHandlers, unimplementedHandler } = packageExports
+const { MIPS, MIPS_COPROCESSOR0_REGISTER_NUMBERS, makeMipsFromFiles, registerHandlers, unimplementedHandler } = packageExports
 
 const makeSingleFileMips = source => makeMipsFromFiles({ 'main.asm': source }, 'main.asm')
 
@@ -441,5 +441,135 @@ assert.equal(peripherals.countMemoryObservers(), 0)
 // program; removing them all is what a fresh build should do.
 peripherals.removeMemoryObservers()
 
+
+// Register files: the FPU (coprocessor 1) registers with their condition flags, and the four
+// coprocessor 0 registers. MARS has no li.s/li.d pseudo-instruction, so the constants are loaded
+// from .float/.double data with l.s/l.d, which is the same register write.
+const FPU_SOURCE = `
+    .data
+one_half:   .float  1.5
+two_fifths: .double 0.4
+    .text
+    .globl main
+main:
+    l.s  $f2, one_half      # $f2 = 1.5f
+    l.d  $f4, two_fifths    # $f4/$f5 = 0.4 as a double, low word in $f4
+    li   $t0, 0x40400000    # 3.0f as a bit pattern
+    mtc1 $t0, $f6           # $f6 = 3.0f
+    add.s $f8, $f2, $f6     # $f8 = 4.5f
+    li   $t1, 0x11223344
+    mtc1 $t1, $f11          # a pattern the next instruction overwrites
+    cvt.d.s $f10, $f2       # $f10/$f11 = 1.5 as a double
+    c.lt.s $f2, $f6         # 1.5 < 3.0, so condition flag 0 becomes 1
+    c.lt.s 3, $f6, $f2      # 3.0 < 1.5 is false, so flag 3 becomes 0
+    c.lt.s 5, $f2, $f6      # and flag 5 becomes 1
+    li   $v0, 10
+    syscall
+`
+
+const FLOAT_BITS = new DataView(new ArrayBuffer(8))
+const singleBits = value => {
+    FLOAT_BITS.setFloat32(0, value)
+    return FLOAT_BITS.getInt32(0)
+}
+const doubleWords = value => {
+    FLOAT_BITS.setFloat64(0, value)
+    // low word first, the order the even/odd register pair holds
+    return [FLOAT_BITS.getInt32(4), FLOAT_BITS.getInt32(0)]
+}
+
+const fpu = makeSingleFileMips(FPU_SOURCE)
+registerHandlers(fpu, Object.fromEntries(HANDLER_NAMES.map(name => [name, unimplementedHandler(name)])))
+
+const fpuAssembly = fpu.assemble()
+assert.equal(fpuAssembly.hasErrors, false, `FPU assembly failed: ${fpuAssembly.report}`)
+
+// Before running, every FPU register reads zero and coprocessor 0 holds its reset values.
+fpu.initialize(true)
+const initialCoprocessor1 = Array.from(fpu.getCoprocessor1Values())
+assert.equal(initialCoprocessor1.length, 32, 'the FPU file is $f0..$f31')
+assert.ok(initialCoprocessor1.every(value => value === 0), 'the FPU registers start cleared')
+
+const DEFAULT_STATUS_VALUE = 0x0000ff11
+assert.deepEqual(Array.from(MIPS_COPROCESSOR0_REGISTER_NUMBERS), [8, 12, 13, 14])
+const initialCoprocessor0 = Array.from(fpu.getCoprocessor0Values())
+assert.equal(initialCoprocessor0.length, 4, 'coprocessor 0 implements four registers')
+assert.deepEqual(initialCoprocessor0, [0, DEFAULT_STATUS_VALUE, 0, 0], 'status reads its default before any exception')
+assert.deepEqual(Array.from(fpu.getConditionFlags()), [0, 0, 0, 0, 0, 0, 0, 0])
+
+let fpuSteps = 0
+while (!fpu.terminated && fpuSteps < 10_000) {
+    await fpu.step()
+    fpuSteps++
+}
+assert.ok(fpu.terminated, 'FPU program did not terminate')
+
+const coprocessor1 = Array.from(fpu.getCoprocessor1Values())
+assert.equal(coprocessor1[2], 0x3fc00000 | 0, 'l.s of 1.5 gives its single precision bit pattern in $f2')
+assert.deepEqual([coprocessor1[4], coprocessor1[5]], doubleWords(0.4), 'l.d fills the even/odd pair, low word first')
+assert.equal(coprocessor1[6], singleBits(3.0), 'mtc1 copies the integer register bit pattern into $f6')
+assert.equal(coprocessor1[8], singleBits(4.5), 'add.s sums the two single precision registers')
+assert.deepEqual([coprocessor1[10], coprocessor1[11]], doubleWords(1.5), 'cvt.d.s widens $f2 into the $f10/$f11 pair')
+assert.notEqual(coprocessor1[11], 0x11223344, 'cvt.d.s overwrites the high word of the pair')
+assert.deepEqual(Array.from(fpu.getConditionFlags()), [1, 0, 0, 0, 0, 1, 0, 0], 'each compare wrote the flag it named')
+
+// The Core's own undo restores a coprocessor 1 write: the backstepper records
+// COPROC1_REGISTER_RESTORE for every FPU register an instruction touches, and
+// COPROC1_CONDITION_SET/CLEAR for every condition flag a compare writes.
+const undoUntil = (predicate, message) => {
+    let undos = 0
+    while (fpu.canUndo && !predicate() && undos < 100) {
+        fpu.undo()
+        undos++
+    }
+    assert.ok(predicate(), message)
+}
+
+undoUntil(() => fpu.getConditionFlags()[5] === 0, 'undo should roll back the flag the last compare set')
+assert.deepEqual(Array.from(fpu.getConditionFlags()), [1, 0, 0, 0, 0, 0, 0, 0], 'the earlier compare result survives')
+
+undoUntil(() => fpu.getConditionFlags()[0] === 0, 'undo should roll back the first compare too')
+assert.deepEqual(Array.from(fpu.getConditionFlags()), [0, 0, 0, 0, 0, 0, 0, 0])
+
+const beforeUndo = Array.from(fpu.getCoprocessor1Values())
+assert.deepEqual([beforeUndo[10], beforeUndo[11]], doubleWords(1.5), 'the widened pair is still there')
+undoUntil(() => fpu.getCoprocessor1Values()[11] !== beforeUndo[11], 'undo should restore the pair cvt.d.s wrote')
+const afterUndo = Array.from(fpu.getCoprocessor1Values())
+assert.deepEqual([afterUndo[10], afterUndo[11]], [0, 0x11223344],
+    'undo restores the previous bit pattern of both registers of the pair')
+assert.deepEqual(afterUndo.slice(0, 10), beforeUndo.slice(0, 10), 'undo leaves the registers that instruction did not write')
+
+// The setters write the register itself, as a host presetting state, so they round trip through
+// the getters and add nothing to the undo stack.
+const undoStackBeforeSetters = fpu.getUndoStack().length
+assert.ok(undoStackBeforeSetters > 0, 'the executed program should have filled the undo stack')
+
+fpu.setCoprocessor1Value(0, 0x7fffffff | 0)
+fpu.setCoprocessor1Value(31, -1)
+fpu.setCoprocessor1Value(12, singleBits(-2.25))
+const afterSetters = Array.from(fpu.getCoprocessor1Values())
+assert.equal(afterSetters[0], 0x7fffffff | 0)
+assert.equal(afterSetters[31], -1)
+assert.equal(afterSetters[12], singleBits(-2.25))
+
+fpu.setCoprocessor0Value(8, 0x00400020)
+fpu.setCoprocessor0Value(12, 0)
+fpu.setCoprocessor0Value(13, 0x18)
+fpu.setCoprocessor0Value(14, 0x00400000)
+assert.deepEqual(Array.from(fpu.getCoprocessor0Values()), [0x00400020, 0, 0x18, 0x00400000])
+
+fpu.setConditionFlag(7, true)
+fpu.setConditionFlag(0, true)
+fpu.setConditionFlag(0, false)
+assert.deepEqual(Array.from(fpu.getConditionFlags()), [0, 0, 0, 0, 0, 0, 0, 1], 'a flag set directly reads back')
+
+assert.equal(fpu.getUndoStack().length, undoStackBeforeSetters, 'a preset value must not become an undo entry')
+
+assert.throws(() => fpu.setCoprocessor1Value(32, 0), /FPU register index/)
+assert.throws(() => fpu.setCoprocessor1Value(-1, 0), /FPU register index/)
+assert.throws(() => fpu.setCoprocessor0Value(9, 0), /8, 12, 13 or 14/)
+assert.throws(() => fpu.setConditionFlag(8, true), /Condition flag/)
+
 console.log(`ok - ran ${steps} instructions, printed "${output.join('')}"`)
 console.log(`ok - peripherals: ${writes.length} observed writes, slept ${slept.join(',')}ms, clock ${clock}`)
+console.log(`ok - register files: FPU $f2 ${coprocessor1[2].toString(16)}, flags ${Array.from(fpu.getConditionFlags()).join('')}`)

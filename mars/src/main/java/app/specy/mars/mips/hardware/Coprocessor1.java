@@ -503,6 +503,24 @@ public class Coprocessor1 {
    }
 
    /**
+    * Set or clear a condition flag without recording a backstep entry. Unlike
+    * setConditionFlag and clearConditionFlag, which the simulated compare instructions
+    * go through, this is for a host presetting the FPU state: such a write is not the
+    * program executing, so it must not become a step the user can undo.
+    *
+    * @param flag  condition flag number (0-7); any other number is ignored
+    * @param value true to set the flag to 1, false to clear it to 0
+    */
+   public static void setConditionFlagDirectly(int flag, boolean value) {
+      if (flag < 0 || flag >= numConditionFlags) {
+         return;
+      }
+      condition.setValue(value
+            ? Binary.setBit(condition.getValue(), flag)
+            : Binary.clearBit(condition.getValue(), flag));
+   }
+
+   /**
     * Get value of specified condition flag (0-7).
     *
     * @param flag condition flag number (0-7)

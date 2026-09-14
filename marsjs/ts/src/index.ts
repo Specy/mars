@@ -200,6 +200,14 @@ export type MIPSAssembleResult = {
 }
 
 
+/**
+ * The coprocessor 0 register numbers, in the order `getCoprocessor0Values` returns their values
+ * and `setCoprocessor0Value` names them: `$8 (vaddr)`, `$12 (status)`, `$13 (cause)`,
+ * `$14 (epc)`. Coprocessor 0 implements only these four, so a register's number is not its
+ * position in the array.
+ */
+export const MIPS_COPROCESSOR0_REGISTER_NUMBERS = [8, 12, 13, 14] as const
+
 export class MIPS {
     public static makeMipsFromFiles = makeMipsFromFiles
     public static initializeMIPS = initializeMIPS
@@ -394,9 +402,55 @@ export interface JsMips {
 
 
     /**
-     * Gets the 8 condition flags.
+     * Gets the 8 FPU condition flags, element i being flag i, each 0 or 1. They are the FPU
+     * register file's status flags: a compare instruction such as `c.lt.s` writes one.
      */
     getConditionFlags(): number[];
+
+    /**
+     * Sets one FPU condition flag. The write is direct: it records no undo step, so a preset
+     * value never becomes an entry the simulation can step back over.
+     * @param flag The flag number, 0 to 7. Any other number throws.
+     * @param value True to set the flag to 1, false to clear it to 0.
+     */
+    setConditionFlag(flag: number, value: boolean): void;
+
+    /**
+     * Gets the raw 32 bit patterns of the FPU (coprocessor 1) registers: element i is `$fi`, so
+     * the array is always 32 long and in register order.
+     *
+     * The values are bit patterns, not numbers: read element i through `Float32Array`/`DataView`
+     * for the single precision value. A double occupies an even/odd register pair, the low word
+     * in the even register and the high word in the odd one that follows it, as MARS does: the
+     * double held in `$f2` has element 2 as its low 32 bits and element 3 as its high 32 bits,
+     * and an odd register alone holds no double.
+     */
+    getCoprocessor1Values(): number[];
+
+    /**
+     * Sets one FPU register to a raw 32 bit pattern. The write is direct: it records no undo
+     * step, exactly like `setRegisterValue`.
+     * @param index The register number, 0 to 31, `$f0` to `$f31`. Any other index throws.
+     * @param value The 32 bit pattern to store.
+     */
+    setCoprocessor1Value(index: number, value: number): void;
+
+    /**
+     * Gets the values of the four implemented coprocessor 0 registers, in the fixed order
+     * `$8 (vaddr)`, `$12 (status)`, `$13 (cause)`, `$14 (epc)` - the register numbers in
+     * `MIPS_COPROCESSOR0_REGISTER_NUMBERS`. `status` reads 0x0000FF11 until an exception
+     * changes it.
+     */
+    getCoprocessor0Values(): number[];
+
+    /**
+     * Sets one coprocessor 0 register. The write is direct: it records no undo step.
+     * @param number The register number, one of `MIPS_COPROCESSOR0_REGISTER_NUMBERS`
+     * (8, 12, 13 or 14). Any other number throws. This is the register's MIPS number, not its
+     * position in `getCoprocessor0Values()`.
+     * @param value The 32 bit value to store.
+     */
+    setCoprocessor0Value(number: number, value: number): void;
 
 
     /**

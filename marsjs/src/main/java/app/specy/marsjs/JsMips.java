@@ -8,6 +8,7 @@ import app.specy.mars.assembler.SourceLine;
 import app.specy.mars.assembler.TokenList;
 import app.specy.mars.mips.fs.MemoryFileSystem;
 import app.specy.mars.mips.hardware.AddressErrorException;
+import app.specy.mars.mips.hardware.Coprocessor0;
 import app.specy.mars.mips.hardware.Coprocessor1;
 import app.specy.mars.mips.hardware.Register;
 import app.specy.mars.mips.hardware.RegisterFile;
@@ -185,6 +186,77 @@ public class JsMips {
             flags[i] = Coprocessor1.getConditionFlag(i);
         }
         return flags;
+    }
+
+    /**
+     * Sets one of the 8 FPU condition flags directly, without recording an undo step:
+     * Coprocessor1.setConditionFlag and clearConditionFlag push a backstep entry, which a host
+     * presetting the FPU must not do.
+     */
+    @JSExport
+    public void setConditionFlag(int flag, boolean value) {
+        if (flag < 0 || flag >= 8) {
+            throw new IllegalArgumentException("Condition flag must be between 0 and 7");
+        }
+        Coprocessor1.setConditionFlagDirectly(flag, value);
+    }
+
+    /**
+     * The raw 32 bit patterns of the FPU registers, element i being $fi. A double occupies an
+     * even/odd pair, the low word in the even register and the high word in the odd one that
+     * follows it, as MARS does.
+     */
+    @JSExport
+    public int[] getCoprocessor1Values() {
+        Register[] registers = Coprocessor1.getRegisters();
+        int[] values = new int[registers.length];
+        for (int i = 0; i < registers.length; i++) {
+            values[i] = registers[i].getValue();
+        }
+        return values;
+    }
+
+    /**
+     * Writes one FPU register directly, bypassing the backstepper, exactly as setRegisterValue
+     * writes a general register: a value the host presets is not a step to undo.
+     */
+    @JSExport
+    public void setCoprocessor1Value(int index, int value) {
+        Register[] registers = Coprocessor1.getRegisters();
+        if (index < 0 || index >= registers.length) {
+            throw new IllegalArgumentException("FPU register index must be between 0 and "
+                    + (registers.length - 1));
+        }
+        registers[index].setValue(value);
+    }
+
+    /**
+     * The values of the four implemented coprocessor 0 registers, in the order Coprocessor0
+     * holds them: $8 (vaddr), $12 (status), $13 (cause), $14 (epc).
+     */
+    @JSExport
+    public int[] getCoprocessor0Values() {
+        Register[] registers = Coprocessor0.getRegisters();
+        int[] values = new int[registers.length];
+        for (int i = 0; i < registers.length; i++) {
+            values[i] = registers[i].getValue();
+        }
+        return values;
+    }
+
+    /**
+     * Writes one coprocessor 0 register directly, bypassing the backstepper. The register is
+     * named by its MIPS number (8, 12, 13 or 14), not by its position.
+     */
+    @JSExport
+    public void setCoprocessor0Value(int number, int value) {
+        for (Register register : Coprocessor0.getRegisters()) {
+            if (register.getNumber() == number) {
+                register.setValue(value);
+                return;
+            }
+        }
+        throw new IllegalArgumentException("Coprocessor 0 register number must be 8, 12, 13 or 14");
     }
 
     @JSExport
