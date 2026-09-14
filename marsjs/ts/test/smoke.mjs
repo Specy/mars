@@ -497,6 +497,12 @@ assert.equal(initialCoprocessor0.length, 4, 'coprocessor 0 implements four regis
 assert.deepEqual(initialCoprocessor0, [0, DEFAULT_STATUS_VALUE, 0, 0], 'status reads its default before any exception')
 assert.deepEqual(Array.from(fpu.getConditionFlags()), [0, 0, 0, 0, 0, 0, 0, 0])
 
+// Flag 3 is preset to 1 so that the false compare below has something to clear: 0 is also the
+// flag's initial value, so without the preset the post-run expectation could not tell a compare
+// that wrote 0 from one that never ran.
+fpu.setConditionFlag(3, true)
+assert.equal(fpu.getConditionFlags()[3], 1, 'a preset flag reads back before the program runs')
+
 let fpuSteps = 0
 while (!fpu.terminated && fpuSteps < 10_000) {
     await fpu.step()
@@ -511,7 +517,8 @@ assert.equal(coprocessor1[6], singleBits(3.0), 'mtc1 copies the integer register
 assert.equal(coprocessor1[8], singleBits(4.5), 'add.s sums the two single precision registers')
 assert.deepEqual([coprocessor1[10], coprocessor1[11]], doubleWords(1.5), 'cvt.d.s widens $f2 into the $f10/$f11 pair')
 assert.notEqual(coprocessor1[11], 0x11223344, 'cvt.d.s overwrites the high word of the pair')
-assert.deepEqual(Array.from(fpu.getConditionFlags()), [1, 0, 0, 0, 0, 1, 0, 0], 'each compare wrote the flag it named')
+assert.deepEqual(Array.from(fpu.getConditionFlags()), [1, 0, 0, 0, 0, 1, 0, 0],
+    'each compare wrote the flag it named, the false one clearing the flag preset to 1')
 
 // The Core's own undo restores a coprocessor 1 write: the backstepper records
 // COPROC1_REGISTER_RESTORE for every FPU register an instruction touches, and
@@ -529,7 +536,8 @@ undoUntil(() => fpu.getConditionFlags()[5] === 0, 'undo should roll back the fla
 assert.deepEqual(Array.from(fpu.getConditionFlags()), [1, 0, 0, 0, 0, 0, 0, 0], 'the earlier compare result survives')
 
 undoUntil(() => fpu.getConditionFlags()[0] === 0, 'undo should roll back the first compare too')
-assert.deepEqual(Array.from(fpu.getConditionFlags()), [0, 0, 0, 0, 0, 0, 0, 0])
+assert.deepEqual(Array.from(fpu.getConditionFlags()), [0, 0, 0, 1, 0, 0, 0, 0],
+    'undoing the false compare puts flag 3 back to the 1 it was preset to')
 
 const beforeUndo = Array.from(fpu.getCoprocessor1Values())
 assert.deepEqual([beforeUndo[10], beforeUndo[11]], doubleWords(1.5), 'the widened pair is still there')
@@ -561,7 +569,8 @@ assert.deepEqual(Array.from(fpu.getCoprocessor0Values()), [0x00400020, 0, 0x18, 
 fpu.setConditionFlag(7, true)
 fpu.setConditionFlag(0, true)
 fpu.setConditionFlag(0, false)
-assert.deepEqual(Array.from(fpu.getConditionFlags()), [0, 0, 0, 0, 0, 0, 0, 1], 'a flag set directly reads back')
+assert.deepEqual(Array.from(fpu.getConditionFlags()), [0, 0, 0, 1, 0, 0, 0, 1],
+    'a flag set directly reads back, and flag 3 still holds what undo restored')
 
 assert.equal(fpu.getUndoStack().length, undoStackBeforeSetters, 'a preset value must not become an undo entry')
 
@@ -569,7 +578,49 @@ assert.throws(() => fpu.setCoprocessor1Value(32, 0), /FPU register index/)
 assert.throws(() => fpu.setCoprocessor1Value(-1, 0), /FPU register index/)
 assert.throws(() => fpu.setCoprocessor0Value(9, 0), /8, 12, 13 or 14/)
 assert.throws(() => fpu.setConditionFlag(8, true), /Condition flag/)
+// A fractional index is not an index: TeaVM hands the JS number through untouched, so the range
+// check rejects it rather than letting the array access fail with a raw TypeError.
+assert.throws(() => fpu.setCoprocessor1Value(1.7, 0), /FPU register index/)
+assert.throws(() => fpu.setCoprocessor1Value(Number.NaN, 0), /FPU register index/)
+
+// MARS holds the register files statically, so the next program's initialize() clears them:
+// remember the flags now, while they still belong to this run.
+const presetFlags = Array.from(fpu.getConditionFlags()).join('')
+
+
+// Undo restores a coprocessor 0 write too: an address error writes vaddr, status, cause and epc,
+// and the backstepper's COPROC0_REGISTER_RESTORE entries put all four back.
+const EXCEPTION_SOURCE = `
+    .text
+    .globl main
+main:
+    lw $t0, 3($zero)        # unaligned and unmapped, so MARS raises an address error
+    li $v0, 10
+    syscall
+`
+
+const trapping = makeSingleFileMips(EXCEPTION_SOURCE)
+registerHandlers(trapping, Object.fromEntries(HANDLER_NAMES.map(name => [name, unimplementedHandler(name)])))
+const trappingAssembly = trapping.assemble()
+assert.equal(trappingAssembly.hasErrors, false, `exception program assembly failed: ${trappingAssembly.report}`)
+trapping.initialize(true)
+assert.deepEqual(Array.from(trapping.getCoprocessor0Values()), [0, DEFAULT_STATUS_VALUE, 0, 0])
+
+// With no exception handler installed, MARS reports the address error out of step() itself.
+await assert.rejects(() => trapping.step(), /not aligned/, 'the unaligned load should raise an address error')
+
+const trapped = Array.from(trapping.getCoprocessor0Values())
+assert.equal(trapped[0], 3, 'vaddr holds the address that faulted')
+assert.notEqual(trapped[2], 0, 'cause records the exception')
+assert.notEqual(trapped[3], 0, 'epc records the faulting instruction')
+
+assert.ok(trapping.canUndo, 'the exception should leave undo entries behind')
+while (trapping.canUndo) {
+    trapping.undo()
+}
+assert.deepEqual(Array.from(trapping.getCoprocessor0Values()), [0, DEFAULT_STATUS_VALUE, 0, 0],
+    'undo rolls every coprocessor 0 register back to its pre-exception value')
 
 console.log(`ok - ran ${steps} instructions, printed "${output.join('')}"`)
 console.log(`ok - peripherals: ${writes.length} observed writes, slept ${slept.join(',')}ms, clock ${clock}`)
-console.log(`ok - register files: FPU $f2 ${coprocessor1[2].toString(16)}, flags ${Array.from(fpu.getConditionFlags()).join('')}`)
+console.log(`ok - register files: FPU $f2 ${coprocessor1[2].toString(16)}, flags ${presetFlags}`)

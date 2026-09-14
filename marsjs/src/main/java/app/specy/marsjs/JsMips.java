@@ -223,8 +223,12 @@ public class JsMips {
     @JSExport
     public void setCoprocessor1Value(int index, int value) {
         Register[] registers = Coprocessor1.getRegisters();
-        if (index < 0 || index >= registers.length) {
-            throw new IllegalArgumentException("FPU register index must be between 0 and "
+        // TeaVM does not coerce the argument at the export boundary, so a fractional index would
+        // slip past a plain range check and then blow up inside the array access with a raw
+        // TypeError. `index | 0` truncates in the compiled JS, which makes the comparison reject
+        // it with the documented exception, while staying a no-op in Java.
+        if (index < 0 || index >= registers.length || index != (index | 0)) {
+            throw new IllegalArgumentException("FPU register index must be a whole number between 0 and "
                     + (registers.length - 1));
         }
         registers[index].setValue(value);

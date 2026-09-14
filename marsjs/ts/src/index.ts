@@ -424,13 +424,20 @@ export interface JsMips {
      * in the even register and the high word in the odd one that follows it, as MARS does: the
      * double held in `$f2` has element 2 as its low 32 bits and element 3 as its high 32 bits,
      * and an odd register alone holds no double.
+     *
+     * Each element is a signed 32 bit int, exactly like `getRegistersValues`: a value with the
+     * top bit set reads back negative, so use `value >>> 0` for its unsigned form. The array
+     * itself is an `Int32Array` at runtime, as `getRegistersValues` is, so `Array.isArray` is
+     * false and `slice`/`map` return another `Int32Array` (whose `map` result is truncated back
+     * to int32): copy it with `Array.from` when a real array is needed.
      */
     getCoprocessor1Values(): number[];
 
     /**
      * Sets one FPU register to a raw 32 bit pattern. The write is direct: it records no undo
      * step, exactly like `setRegisterValue`.
-     * @param index The register number, 0 to 31, `$f0` to `$f31`. Any other index throws.
+     * @param index The register number, 0 to 31, `$f0` to `$f31`. It must be a whole number;
+     * anything else, including a fractional index, throws.
      * @param value The 32 bit pattern to store.
      */
     setCoprocessor1Value(index: number, value: number): void;
@@ -440,6 +447,12 @@ export interface JsMips {
      * `$8 (vaddr)`, `$12 (status)`, `$13 (cause)`, `$14 (epc)` - the register numbers in
      * `MIPS_COPROCESSOR0_REGISTER_NUMBERS`. `status` reads 0x0000FF11 until an exception
      * changes it.
+     *
+     * Each element is a signed 32 bit int, exactly like `getRegistersValues`: a value with the
+     * top bit set reads back negative, so use `value >>> 0` for its unsigned form. The array
+     * itself is an `Int32Array` at runtime, as `getRegistersValues` is, so `Array.isArray` is
+     * false and `slice`/`map` return another `Int32Array` (whose `map` result is truncated back
+     * to int32): copy it with `Array.from` when a real array is needed.
      */
     getCoprocessor0Values(): number[];
 
