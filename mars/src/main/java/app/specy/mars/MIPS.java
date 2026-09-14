@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Set;
 
 import app.specy.mars.assembler.SourceLine;
+import app.specy.mars.assembler.Symbol;
 import app.specy.mars.assembler.SymbolTable;
 import app.specy.mars.assembler.TokenList;
 import app.specy.mars.mips.fs.MIPSFileSystem;
@@ -144,7 +145,8 @@ public class MIPS {
 
     public String getLabelAtAddress(int address){
         requireAssembled();
-        return this.main.getLocalSymbolTable().getSymbolGivenIntAddress(address).getName();
+        Symbol symbol = this.main.getLocalSymbolTable().getSymbolGivenIntAddressLocalOrGlobal(address);
+        return (symbol == null) ? null : symbol.getName();
     }
 
     public boolean simulate(int[] breakpoints) throws ProcessingException {
