@@ -621,6 +621,332 @@ while (trapping.canUndo) {
 assert.deepEqual(Array.from(trapping.getCoprocessor0Values()), [0, DEFAULT_STATUS_VALUE, 0, 0],
     'undo rolls every coprocessor 0 register back to its pre-exception value')
 
+
+// Pokes: a register or memory value the host changes between two instructions, recorded in this
+// same history as a step of its own and undone by the Core itself. The contract is beginPoke() /
+// endPoke() around the setters the package already has; outside a transaction they stay direct,
+// which is what presetting a testcase needs.
+const POKE_DATA = 0x10010000
+const POKE_SOURCE = `
+    .data
+cell:   .word 0x0a0b0c0d
+    .text
+    .globl main
+main:
+    li   $t0, 1
+    li   $t1, 2
+    jal  helper             # one instruction, two back steps: $ra and the program counter
+    li   $v0, 10
+    syscall
+helper:
+    addi $t2, $zero, 7
+    jr   $ra
+`
+
+const poking = makeSingleFileMips(POKE_SOURCE)
+registerHandlers(poking, Object.fromEntries(HANDLER_NAMES.map(name => [name, unimplementedHandler(name)])))
+const pokeAssembly = poking.assemble()
+assert.equal(pokeAssembly.hasErrors, false, `poke program assembly failed: ${pokeAssembly.report}`)
+poking.initialize(true)
+
+const pokeWrites = []
+const pokeObserver = poking.addMemoryWriteObserver(POKE_DATA, POKE_DATA,
+    (address, length, value) => pokeWrites.push([address, length, value]))
+
+const groupKinds = mips => Array.from(mips.getUndoGroups(), group => group.kind)
+
+await poking.step() // li $t0, 1
+await poking.step() // li $t1, 2
+await poking.step() // jal helper
+
+// The grouped history is what undo() pops: the jal is one entry, not the two back steps it records.
+const afterJal = poking.getUndoGroups()
+assert.equal(afterJal.length, 3, 'three executed instructions are three entries')
+assert.deepEqual(groupKinds(poking), ['instruction', 'instruction', 'instruction'])
+assert.equal(afterJal[0].steps.length, 2, 'jal is one entry made of the $ra restore and the pc restore')
+assert.equal(afterJal[0].pc, 0x00400008, 'an instruction entry reports its own address')
+assert.deepEqual(Array.from(afterJal[0].writes), [], 'only a poke reports writes')
+assert.equal(poking.getUndoStack().length, 4, 'getUndoStack still reports one element per back step')
+
+// 2. Outside a transaction every setter is direct and records nothing, so a preset never becomes
+// an entry, and the host write is not reverted with the instruction that ran before it.
+const stackBeforePresets = poking.getUndoStack().length
+const groupsBeforePresets = poking.getUndoGroups().length
+poking.setRegisterValue('$s0', 0x1111)
+poking.setCoprocessor1Value(4, 0x2222)
+poking.setCoprocessor0Value(13, 0x3333)
+poking.setConditionFlag(2, true)
+poking.setMemoryBytes(POKE_DATA, [9, 9, 9, 9])
+assert.equal(poking.getUndoStack().length, stackBeforePresets, 'a preset must not push a back step')
+assert.equal(poking.getUndoGroups().length, groupsBeforePresets, 'a preset must not become an entry')
+assert.deepEqual(pokeWrites, [[POKE_DATA, 1, 9], [POKE_DATA + 1, 1, 9], [POKE_DATA + 2, 1, 9], [POKE_DATA + 3, 1, 9]],
+    'a direct memory write still notifies observers, which is how a memory mapped display repaints')
+poking.undo() // the jal
+assert.deepEqual(Array.from(poking.readMemoryBytes(POKE_DATA, 4)), [9, 9, 9, 9],
+    'undoing the instruction before it must not revert a host memory write')
+assert.equal(poking.getRegisterValue('$s0'), 0x1111, 'nor a host register write')
+assert.equal(poking.getUndoGroups().length, 2, 'the jal was one undo, so one entry is gone')
+pokeWrites.length = 0
+
+// 1. The transaction API.
+assert.equal(poking.pokeOpen(), false)
+poking.beginPoke()
+assert.equal(poking.pokeOpen(), true)
+assert.throws(() => poking.beginPoke(), /already open/, 'a second beginPoke inside a poke throws')
+assert.equal(poking.endPoke(), false, 'a poke that wrote nothing records no entry')
+assert.equal(poking.pokeOpen(), false)
+assert.throws(() => poking.endPoke(), /No poke is open/, 'endPoke outside a poke throws')
+
+// 3. A write that leaves the value unchanged journals nothing.
+const groupsBeforeNoop = poking.getUndoGroups().length
+poking.beginPoke()
+poking.setRegisterValue('$t0', poking.getRegisterValue('$t0'))
+poking.setMemoryBytes(POKE_DATA, [9, 9, 9, 9])
+poking.setConditionFlag(2, true)
+assert.equal(poking.endPoke(), false, 'writing the values already there records nothing')
+assert.equal(poking.getUndoGroups().length, groupsBeforeNoop, 'and leaves the history as it was')
+assert.deepEqual(pokeWrites, [], 'a byte already holding the value is not even written')
+
+// 4, 5 and 7. One transaction is one entry, at its place in the history, with its own identity:
+// never the address of an instruction, so that a host journal keyed by one is not popped by a poke.
+const pcBeforePoke = poking.programCounter
+const callStackBeforePoke = poking.getCallStack().length
+assert.ok(callStackBeforePoke > 0, 'the jal left a frame to check the poke does not disturb')
+const t2BeforePoke = poking.getRegisterValue('$t2')
+
+const stackBeforePoke = poking.getUndoStack().length
+poking.beginPoke()
+poking.setRegisterValue('$t0', 0x1234)
+poking.setRegisterValue('$t0', 0x5678) // the same register twice: one write, the first old value
+poking.setMemoryBytes(POKE_DATA, [1, 2, 3, 4])
+poking.setCoprocessor1Value(2, 0x7f800000 | 0)
+poking.setCoprocessor0Value(13, 0x18)
+poking.setConditionFlag(6, true)
+assert.equal(poking.endPoke(), true, 'a poke that changed something records one entry')
+
+const pokeGroups = poking.getUndoGroups()
+assert.equal(pokeGroups.length, groupsBeforeNoop + 1, 'however many writes, a poke is one entry')
+assert.equal(poking.getUndoStack().length, stackBeforePoke + 1,
+    'and one back step: eight values written cost one slot of the history, not eight')
+assert.deepEqual(groupKinds(poking), ['poke', 'instruction', 'instruction'],
+    'the entry sits at its place in the same history, newest first')
+const pokeGroup = pokeGroups[0]
+assert.equal(pokeGroup.kind, 'poke')
+assert.equal(pokeGroup.pc, -1, 'a poke belongs to no instruction, so it has no address')
+assert.equal(pokeGroup.steps.length, 1,
+    'a poke is one back step holding all of its writes, so it takes one slot of the history')
+assert.equal(pokeGroup.steps[0].pc, -1, 'which carries no instruction address')
+assert.equal(pokeGroup.steps[0].isPoke, true, 'and says it is a poke')
+assert.equal(poking.getUndoStack()[0].isPoke, true,
+    'the raw stack reports the same discriminator: a poke and a pre-run host write share pc -1')
+assert.equal(poking.getUndoStack()[1].isPoke, false, 'an instruction step does not')
+assert.notEqual(pokeGroups[1].pc, -1, 'the instruction below it still reports its address')
+assert.deepEqual(pokeGroup.writes, [
+    // Old values are what the simulator held when each write happened, new values what it held at
+    // endPoke: $t0 was written twice and reports the first old value and the last new one.
+    { type: 'register', name: '$t0', old: 1, new: 0x5678 },
+    { type: 'register', name: '$f2', old: 0, new: 0x7f800000 | 0 },
+    { type: 'register', name: '$13 (cause)', old: 0x3333, new: 0x18 },
+    { type: 'register', name: 'flag 6', old: 0, new: 1 },
+    { type: 'memory', address: POKE_DATA, old: [9, 9, 9, 9], new: [1, 2, 3, 4] },
+], 'the entry reports every value it changed, old and new')
+// The entries, their back steps and their writes are ordinary objects with own properties, not
+// accessors on a class, so a host can clone or serialize a history without mapping it first.
+assert.deepEqual(Object.keys(pokeGroup), ['kind', 'pc', 'steps', 'writes'])
+assert.deepEqual(Object.keys(pokeGroup.steps[0]), ['action', 'pc', 'param1', 'param2', 'isPoke'])
+assert.deepEqual(structuredClone(pokeGroup.writes)[4],
+    { type: 'memory', address: POKE_DATA, old: [9, 9, 9, 9], new: [1, 2, 3, 4] },
+    'a writes list survives structuredClone with the documented shape')
+assert.deepEqual(JSON.parse(JSON.stringify(pokeGroup)).writes[0],
+    { type: 'register', name: '$t0', old: 1, new: 0x5678 },
+    'and JSON.stringify')
+assert.deepEqual(pokeWrites, [[POKE_DATA, 1, 1], [POKE_DATA + 1, 1, 2], [POKE_DATA + 2, 1, 3], [POKE_DATA + 3, 1, 4]],
+    'a poked byte is written the way the program writes it, so a display repaints')
+assert.equal(poking.canUndo, true, 'a poke on top is something to undo')
+pokeWrites.length = 0
+
+// 6. Undoing a poke restores every write and touches nothing else.
+poking.undo()
+assert.equal(poking.getRegisterValue('$t0'), 1)
+assert.deepEqual(Array.from(poking.readMemoryBytes(POKE_DATA, 4)), [9, 9, 9, 9])
+assert.equal(poking.getCoprocessor1Values()[2], 0)
+assert.equal(poking.getCoprocessor0Values()[2], 0x3333)
+assert.equal(poking.getConditionFlags()[6], 0)
+assert.equal(poking.programCounter, pcBeforePoke, 'undoing a poke leaves the program counter alone')
+assert.equal(poking.getCallStack().length, callStackBeforePoke, 'and the call stack')
+assert.equal(poking.getRegisterValue('$t2'), t2BeforePoke, 'and every register it did not write')
+assert.deepEqual(pokeWrites, [[POKE_DATA + 3, 1, 9], [POKE_DATA + 2, 1, 9], [POKE_DATA + 1, 1, 9], [POKE_DATA, 1, 9]],
+    'the restored bytes are reported like any write, so a display repaints back')
+assert.deepEqual(groupKinds(poking), ['instruction', 'instruction'], 'and the entry is gone')
+pokeWrites.length = 0
+
+// 8. Two consecutive pokes are two entries, and an instruction between pokes undoes in order.
+poking.beginPoke()
+poking.setRegisterValue('$t0', 11)
+assert.equal(poking.endPoke(), true)
+poking.beginPoke()
+poking.setRegisterValue('$t0', 12)
+assert.equal(poking.endPoke(), true)
+assert.deepEqual(groupKinds(poking), ['poke', 'poke', 'instruction', 'instruction'],
+    'two pokes are two entries, not one merged group')
+poking.undo()
+assert.equal(poking.getRegisterValue('$t0'), 11, 'the newer poke alone is reverted')
+poking.undo()
+assert.equal(poking.getRegisterValue('$t0'), 1, 'and then the older one')
+
+const beforeSequence = {
+    t0: poking.getRegisterValue('$t0'),
+    t1: poking.getRegisterValue('$t1'),
+    pc: poking.programCounter,
+    memory: Array.from(poking.readMemoryBytes(POKE_DATA, 4)),
+}
+poking.beginPoke()
+poking.setRegisterValue('$t1', 0x4242)
+poking.setMemoryBytes(POKE_DATA + 1, [0xff])
+assert.equal(poking.endPoke(), true)
+await poking.step() // the jal again, on top of the poke
+assert.deepEqual(groupKinds(poking), ['instruction', 'poke', 'instruction', 'instruction'])
+poking.undo()
+assert.equal(poking.getRegisterValue('$t1'), 0x4242, 'the instruction is reverted first')
+assert.equal(poking.programCounter, beforeSequence.pc, 'back to where the poke was made')
+poking.undo()
+assert.deepEqual({
+    t0: poking.getRegisterValue('$t0'),
+    t1: poking.getRegisterValue('$t1'),
+    pc: poking.programCounter,
+    memory: Array.from(poking.readMemoryBytes(POKE_DATA, 4)),
+}, beforeSequence, 'and then the poke, leaving exactly the state from before it')
+
+// Addresses that are not adjacent are reported as one write per run, by ascending address.
+poking.beginPoke()
+poking.setMemoryBytes(POKE_DATA + 3, [0xaa])
+poking.setMemoryBytes(POKE_DATA, [0xbb, 0xcc])
+assert.equal(poking.endPoke(), true)
+assert.deepEqual(poking.getUndoGroups()[0].writes, [
+    { type: 'memory', address: POKE_DATA, old: [9, 9], new: [0xbb, 0xcc] },
+    { type: 'memory', address: POKE_DATA + 3, old: [9], new: [0xaa] },
+], 'each run of consecutive addresses is one write')
+poking.undo()
+assert.deepEqual(Array.from(poking.readMemoryBytes(POKE_DATA, 4)), [9, 9, 9, 9])
+
+// $zero holds no value, so a poke of it is left alone rather than recorded as something undo
+// could not put back.
+poking.beginPoke()
+poking.setRegisterValue('$zero', 5)
+assert.equal(poking.endPoke(), false, 'poking $zero records nothing')
+assert.equal(poking.getRegisterValue('$zero'), 0, 'and changes nothing')
+
+// With recording off the writes still stand; they simply cannot be undone, exactly as an
+// instruction executed with recording off cannot.
+const groupsBeforeDisabled = poking.getUndoGroups().length
+poking.setUndoEnabled(false)
+poking.beginPoke()
+poking.setRegisterValue('$t0', 0x999)
+assert.equal(poking.endPoke(), false, 'with undo disabled a poke records no entry')
+poking.setUndoEnabled(true)
+assert.equal(poking.getRegisterValue('$t0'), 0x999, 'but the write stands')
+assert.equal(poking.getUndoGroups().length, groupsBeforeDisabled, 'and the history is untouched')
+
+// A poke is refused while an instruction is executing: step() resolves on a microtask, and the
+// simulator's state is half written until it does.
+const pendingStep = poking.step()
+assert.throws(() => poking.beginPoke(), /while an instruction is executing/,
+    'a poke may not open while a step is in flight')
+await pendingStep
+poking.beginPoke()
+poking.endPoke()
+
+poking.removeMemoryObserver(pokeObserver)
+poking.removeMemoryObservers()
+
+// 5 and 6, at the edge the rest of this file never reaches: the undo size is a Setting the user
+// may set to 3, so a poke has to cost one slot of the ring whatever it wrote. A poke recording one
+// slot per value would evict the instructions before it and then be evicted in part itself, which
+// leaves an entry that reports writes `undo()` can no longer put back.
+const CAPACITY_DATA = 0x10010000
+const CAPACITY_SOURCE = `
+    .data
+cell:   .space 16
+    .text
+    .globl main
+main:
+    li   $t0, 1
+    li   $t1, 2
+    li   $t2, 3
+`
+
+const withUndoSize = size => {
+    const mips = makeSingleFileMips(CAPACITY_SOURCE)
+    registerHandlers(mips, Object.fromEntries(HANDLER_NAMES.map(name => [name, unimplementedHandler(name)])))
+    // the ring is allocated by assemble(), so the size has to be set before it
+    mips.setUndoSize(size)
+    const assembly = mips.assemble()
+    assert.equal(assembly.hasErrors, false, `capacity program assembly failed: ${assembly.report}`)
+    mips.initialize(true)
+    return mips
+}
+
+const sized = withUndoSize(8)
+await sized.step() // li $t0, 1
+await sized.step() // li $t1, 2
+sized.beginPoke()
+sized.setMemoryBytes(CAPACITY_DATA, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+assert.equal(sized.endPoke(), true)
+const sizedSlots = sized.getUndoStack().length
+assert.equal(sizedSlots, 3,
+    'a twelve byte poke into an eight slot history is one slot, so both instructions survive')
+assert.deepEqual(groupKinds(sized), ['poke', 'instruction', 'instruction'])
+assert.deepEqual(sized.getUndoGroups()[0].writes, [
+    { type: 'memory', address: CAPACITY_DATA, old: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], new: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] },
+])
+sized.undo()
+assert.deepEqual(Array.from(sized.readMemoryBytes(CAPACITY_DATA, 12)), new Array(12).fill(0),
+    'and undoing it puts back every byte it reported, not just the ones that fitted')
+assert.deepEqual(groupKinds(sized), ['instruction', 'instruction'])
+sized.undo()
+assert.equal(sized.getRegisterValue('$t1'), 0, 'the instruction under the poke is still undoable')
+
+const tiny = withUndoSize(3)
+await tiny.step()
+await tiny.step()
+tiny.beginPoke()
+tiny.setMemoryBytes(CAPACITY_DATA, [1, 2, 3, 4])
+assert.equal(tiny.endPoke(), true)
+assert.equal(tiny.getUndoStack().length, 3)
+assert.deepEqual(groupKinds(tiny), ['poke', 'instruction', 'instruction'])
+tiny.undo()
+assert.deepEqual(Array.from(tiny.readMemoryBytes(CAPACITY_DATA, 4)), [0, 0, 0, 0])
+
+// A history of one: the poke fits, and pushes exactly one entry off the bottom, as an instruction
+// would. What falls off the ring is always a whole entry.
+const single = withUndoSize(1)
+await single.step()
+single.beginPoke()
+single.setRegisterValue('$t1', 0x77)
+single.setMemoryBytes(CAPACITY_DATA, [1, 2, 3, 4])
+assert.equal(single.endPoke(), true)
+assert.equal(single.getUndoStack().length, 1)
+assert.deepEqual(groupKinds(single), ['poke'])
+single.undo()
+assert.equal(single.getRegisterValue('$t1'), 0, 'the poke is undone whole')
+assert.deepEqual(Array.from(single.readMemoryBytes(CAPACITY_DATA, 4)), [0, 0, 0, 0])
+assert.equal(single.canUndo, false, 'and the instruction it evicted is gone, as it would be')
+
+// The in flight guard is this core's own: a step on one core must not refuse a poke on another,
+// because a host assembles throwaway cores (the editor checks a source that way).
+const stepping = withUndoSize(8)
+const other = withUndoSize(8)
+const pendingOnOther = other.step()
+assert.throws(() => other.beginPoke(), /while an instruction is executing/,
+    'the core that is stepping refuses the poke')
+stepping.beginPoke()
+assert.equal(stepping.endPoke(), false, 'while another core does not')
+await pendingOnOther
+other.beginPoke()
+other.endPoke()
+
 console.log(`ok - ran ${steps} instructions, printed "${output.join('')}"`)
 console.log(`ok - peripherals: ${writes.length} observed writes, slept ${slept.join(',')}ms, clock ${clock}`)
 console.log(`ok - register files: FPU $f2 ${coprocessor1[2].toString(16)}, flags ${presetFlags}`)
+console.log(`ok - pokes: ${groupKinds(poking).length} history entries left, ${pokeWrites.length} observed poke writes`)
+console.log(`ok - poke capacity: two instructions and a 12 byte poke fill ${sizedSlots} of 8 slots`)
