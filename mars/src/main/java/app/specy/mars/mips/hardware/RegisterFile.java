@@ -101,16 +101,16 @@ public class RegisterFile {
          // upstream scan compared all 32 to find it, once or twice per instruction.
          Register register = regFile[num];
          old = (Globals.getSettingsProperties().getBackSteppingEnabled())
-               ? Globals.program.getBackStepper().addRegisterFileRestore(num, register.setValue(val))
+               ? Globals.program.getBackStepper().addRegisterFileRestore(num, register.setValue(val), val)
                : register.setValue(val);
       }
       if (num == 33) {// updates the hi register
          old = (Globals.getSettingsProperties().getBackSteppingEnabled())
-               ? Globals.program.getBackStepper().addRegisterFileRestore(num, hi.setValue(val))
+               ? Globals.program.getBackStepper().addRegisterFileRestore(num, hi.setValue(val), val)
                : hi.setValue(val);
       } else if (num == 34) {// updates the low register
          old = (Globals.getSettingsProperties().getBackSteppingEnabled())
-               ? Globals.program.getBackStepper().addRegisterFileRestore(num, lo.setValue(val))
+               ? Globals.program.getBackStepper().addRegisterFileRestore(num, lo.setValue(val), val)
                : lo.setValue(val);
       }
       return old;
@@ -269,7 +269,9 @@ public class RegisterFile {
       int old = programCounter.getValue();
       programCounter.setValue(value);
       if (Globals.getSettingsProperties().getBackSteppingEnabled()) {
-         Globals.program.getBackStepper().addPCRestore(old);
+         // The jump or branch has already set the counter, so `value` is the address it set:
+         // the restore reports it beside the address it would put back.
+         Globals.program.getBackStepper().addPCRestore(old, value);
       }
       return old;
    }

@@ -313,6 +313,25 @@ export interface JsBackStep {
      * Information about the action
      */
     readonly param2: number;
+
+    /**
+     * The other half of what this step restores: the value the write left, as the simulator saw it
+     * at the moment of the write, beside the `param2` it replaced.
+     *
+     * - `REGISTER_RESTORE`, `COPROC0_REGISTER_RESTORE` and `COPROC1_REGISTER_RESTORE`: the whole
+     *   value the write put in the register.
+     * - `MEMORY_RESTORE_RAW_WORD` and `MEMORY_RESTORE_WORD`: the word left at the address.
+     *   `MEMORY_RESTORE_HALF` and `MEMORY_RESTORE_BYTE`: the half or byte left there, in the low
+     *   order bits, so that both values are read at the width the write was made.
+     * - `PC_RESTORE`: the address the instruction set the program counter to, while `param1` is
+     *   the address the restore puts back (`param2` is unused there, as it has always been).
+     * - 0 for the actions that restore no value: `COPROC1_CONDITION_SET`, `COPROC1_CONDITION_CLEAR`,
+     *   `DO_NOTHING` and `POKE`, whose own `writes` already carry both sides of every value.
+     *
+     * A signed 32 bit int like `param2`, the way every register getter of this package reports a
+     * value; read it unsigned with `newValue >>> 0`.
+     */
+    readonly newValue: number;
     /**
      * The program counter value before the action, or -1 for an action that belongs to no
      * instruction: a Poke, or a host write made before anything ran.

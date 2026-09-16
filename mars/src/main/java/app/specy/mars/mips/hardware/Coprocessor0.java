@@ -104,7 +104,7 @@ public class Coprocessor0 {
       for (int i = 0; i < registers.length; i++) {
          if (registers[i].getNumber() == num) {
             old = (Globals.getSettingsProperties().getBackSteppingEnabled())
-                  ? Globals.program.getBackStepper().addCoprocessor0Restore(num, registers[i].setValue(val))
+                  ? Globals.program.getBackStepper().addCoprocessor0Restore(num, registers[i].setValue(val), val)
                   : registers[i].setValue(val);
             break;
          }

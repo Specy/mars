@@ -12,7 +12,7 @@ if (!existsSync(fileURLToPath(dist))) {
 }
 
 const packageExports = await import(dist)
-const { MIPS, MIPS_COPROCESSOR0_REGISTER_NUMBERS, makeMipsFromFiles, registerHandlers, unimplementedHandler } = packageExports
+const { BackStepAction, MIPS, MIPS_COPROCESSOR0_REGISTER_NUMBERS, makeMipsFromFiles, registerHandlers, unimplementedHandler } = packageExports
 
 const makeSingleFileMips = source => makeMipsFromFiles({ 'main.asm': source }, 'main.asm')
 
@@ -753,7 +753,9 @@ assert.deepEqual(pokeGroup.writes, [
 // The entries, their back steps and their writes are ordinary objects with own properties, not
 // accessors on a class, so a host can clone or serialize a history without mapping it first.
 assert.deepEqual(Object.keys(pokeGroup), ['kind', 'pc', 'steps', 'writes'])
-assert.deepEqual(Object.keys(pokeGroup.steps[0]), ['action', 'pc', 'param1', 'param2', 'isPoke'])
+assert.deepEqual(Object.keys(pokeGroup.steps[0]), ['action', 'pc', 'param1', 'param2', 'newValue', 'isPoke'])
+assert.equal(pokeGroup.steps[0].newValue, 0,
+    'a poke entry carries no newValue of its own: its writes already report both sides of each value')
 assert.deepEqual(structuredClone(pokeGroup.writes)[4],
     { type: 'memory', address: POKE_DATA, old: [9, 9, 9, 9], new: [1, 2, 3, 4] },
     'a writes list survives structuredClone with the documented shape')
@@ -945,8 +947,180 @@ await pendingOnOther
 other.beginPoke()
 other.endPoke()
 
+// Every write an instruction records reports the value it wrote beside the value it replaced.
+// `param2` is still what the write replaced, exactly as the adapters read it; `newValue` is what
+// the write left behind, taken by the setter at the moment of the write.
+const WRITTEN_DATA = 0x10010000
+const WRITTEN_SOURCE = `
+    .data
+cell:   .space 16
+    .text
+    .globl main
+main:
+    lui  $s0, 0x1001         # the data segment base, without a pseudo instruction
+    addi $t0, $zero, 0x1234
+    sw   $t0, 0($s0)
+    addi $t1, $zero, -1
+    sw   $t1, 4($s0)
+    sb   $t1, 8($s0)
+    sh   $t1, 10($s0)
+    addi $t2, $zero, 0x41
+    sb   $t2, 8($s0)         # over the byte the sb above wrote
+    mtc1 $t0, $f2
+    mtc0 $t0, $13
+    c.eq.s $f2, $f2
+    nop
+    jal  helper
+    addi $t0, $zero, 7       # over the register the addi above wrote
+    j    done
+helper:
+    jr   $ra
+done:
+    addi $v0, $zero, 10
+`
+
+const written = makeSingleFileMips(WRITTEN_SOURCE)
+registerHandlers(written, Object.fromEntries(HANDLER_NAMES.map(name => [name, unimplementedHandler(name)])))
+// the capacity tests above left the undo size where they set it, and this program wants every
+// instruction it runs to still be in the history at the end
+written.setUndoSize(2000)
+const writtenAssembly = written.assemble()
+assert.equal(writtenAssembly.hasErrors, false, `written-value program assembly failed: ${writtenAssembly.report}`)
+written.initialize(true)
+
+// The newest entry after one instruction, which is that instruction's own.
+const stepAndGroup = async () => {
+    await written.step()
+    return written.getUndoGroups()[0]
+}
+const stepOf = (group, action) => {
+    const step = group.steps.find(entry => entry.action === action)
+    assert.ok(step, `entry at ${group.pc.toString(16)} recorded no step with action ${action}`)
+    return step
+}
+
+// 1. A register write reports the whole register, before and after.
+const luiGroup = await stepAndGroup() // lui $s0, 0x1001
+const luiWrite = stepOf(luiGroup, BackStepAction.REGISTER_RESTORE)
+assert.equal(luiWrite.param2, 0, 'param2 keeps its meaning: the value the write replaced')
+assert.equal(luiWrite.newValue, 0x10010000, 'and newValue is the whole value the write left')
+assert.equal(luiWrite.newValue, written.getRegisterValue('$s0'), 'which is what the register now holds')
+
+const addiGroup = await stepAndGroup() // addi $t0, $zero, 0x1234
+const addiPc = addiGroup.pc
+assert.deepEqual(
+    [stepOf(addiGroup, BackStepAction.REGISTER_RESTORE).param2, stepOf(addiGroup, BackStepAction.REGISTER_RESTORE).newValue],
+    [0, 0x1234])
+
+// 1. A memory write reports the bytes it replaced and the bytes it left, at the width it was made.
+const swGroup = await stepAndGroup() // sw $t0, 0($s0)
+const swWrite = stepOf(swGroup, BackStepAction.MEMORY_RESTORE_WORD)
+assert.equal(swWrite.param1, WRITTEN_DATA, 'param1 keeps its meaning: the address')
+assert.deepEqual([swWrite.param2, swWrite.newValue], [0, 0x1234], 'a word write reports the whole word')
+
+await written.step() // addi $t1, $zero, -1
+const negativeWordGroup = await stepAndGroup() // sw $t1, 4($s0)
+const negativeWord = stepOf(negativeWordGroup, BackStepAction.MEMORY_RESTORE_WORD)
+
+const sbGroup = await stepAndGroup() // sb $t1, 8($s0)
+const sbPc = sbGroup.pc
+const sbWrite = stepOf(sbGroup, BackStepAction.MEMORY_RESTORE_BYTE)
+assert.deepEqual([sbWrite.param1, sbWrite.param2, sbWrite.newValue], [WRITTEN_DATA + 8, 0, 0xff],
+    'a byte write reports one byte, not the sign extended register it came from')
+
+const shGroup = await stepAndGroup() // sh $t1, 10($s0)
+const shWrite = stepOf(shGroup, BackStepAction.MEMORY_RESTORE_HALF)
+assert.deepEqual([shWrite.param1, shWrite.param2, shWrite.newValue], [WRITTEN_DATA + 10, 0, 0xffff],
+    'and a half write reports two bytes')
+
+await written.step() // addi $t2, $zero, 0x41
+const overwriteGroup = await stepAndGroup() // sb $t2, 8($s0)
+const overwrite = stepOf(overwriteGroup, BackStepAction.MEMORY_RESTORE_BYTE)
+assert.deepEqual([overwrite.param2, overwrite.newValue], [0xff, 0x41],
+    'a write over a written byte reports the byte it replaced and the byte it left')
+
+// 1. The coprocessor register files report the same way.
+const mtc1Group = await stepAndGroup() // mtc1 $t0, $f2
+const mtc1Write = stepOf(mtc1Group, BackStepAction.COPROC1_REGISTER_RESTORE)
+assert.deepEqual([mtc1Write.param1, mtc1Write.param2, mtc1Write.newValue], [2, 0, 0x1234])
+assert.equal(mtc1Write.newValue, written.getCoprocessor1Values()[2], 'the whole FPU register')
+
+const mtc0Group = await stepAndGroup() // mtc0 $t0, $13
+const mtc0Write = stepOf(mtc0Group, BackStepAction.COPROC0_REGISTER_RESTORE)
+assert.deepEqual([mtc0Write.param1, mtc0Write.param2, mtc0Write.newValue], [13, 0, 0x1234])
+
+// 1. A condition flag and a do-nothing carry no written value, since neither restores one.
+const compareGroup = await stepAndGroup() // c.eq.s $f2, $f2
+const compareStep = stepOf(compareGroup, BackStepAction.COPROC1_CONDITION_CLEAR)
+assert.equal(compareStep.newValue, 0, 'setting a condition flag reports no written value')
+const nopGroup = await stepAndGroup() // nop
+assert.equal(stepOf(nopGroup, BackStepAction.DO_NOTHING).newValue, 0, 'nor does a do-nothing step')
+
+// 1. The program counter restore reports the address it puts back and the address the jal set.
+const jalGroup = await stepAndGroup() // jal helper
+assert.equal(jalGroup.steps.length, 2, 'the jal is the $ra restore and the pc restore')
+const raWrite = stepOf(jalGroup, BackStepAction.REGISTER_RESTORE)
+assert.deepEqual([raWrite.param1, raWrite.param2, raWrite.newValue], [31, 0, written.getRegisterValue('$ra')])
+const pcRestore = stepOf(jalGroup, BackStepAction.PC_RESTORE)
+assert.equal(pcRestore.param1, jalGroup.pc, 'param1 keeps its meaning: the address the restore puts back')
+assert.equal(pcRestore.param2, 0, 'and param2 is unused by this action, as it has always been')
+assert.equal(pcRestore.newValue, written.programCounter, 'while newValue is the address the instruction set')
+assert.notEqual(pcRestore.newValue, pcRestore.param1)
+
+// 2. The values cross to JavaScript the way this 32 bit package reports every value: as signed
+// ints, whose unsigned form is `newValue >>> 0`. Nothing is truncated on the way.
+assert.equal(negativeWord.newValue, -1, 'a word of all ones crosses as the int the getters report')
+assert.equal(negativeWord.newValue >>> 0, 0xffffffff, 'and reads unsigned through >>> 0')
+assert.deepEqual(Array.from(written.readMemoryBytes(WRITTEN_DATA + 4, 4)), [0xff, 0xff, 0xff, 0xff],
+    'which is the value memory actually holds')
+for (const step of written.getUndoStack()) {
+    assert.equal(typeof step.newValue, 'number')
+    assert.equal(Number.isInteger(step.newValue), true, 'every newValue is an int, never a float')
+    assert.ok(step.newValue >= -0x80000000 && step.newValue <= 0x7fffffff, 'in 32 bit range')
+}
+
+// 3. The field is additive and present on every entry of both read APIs.
+assert.deepEqual(Object.keys(written.getUndoStack()[0]),
+    ['action', 'pc', 'param1', 'param2', 'newValue', 'isPoke'],
+    'the existing fields keep their names and order, with newValue beside the value it replaced')
+const allGroups = written.getUndoGroups()
+assert.ok(allGroups.length > 10)
+for (const group of allGroups) {
+    for (const step of group.steps) {
+        assert.equal(typeof step.newValue, 'number', 'every step of every group reports one')
+    }
+}
+assert.deepEqual(Array.from(allGroups, group => group.steps.length).reduce((a, b) => a + b, 0),
+    written.getUndoStack().length, 'the two APIs report the same steps')
+assert.deepEqual(allGroups[0].steps[0], written.getUndoStack()[0],
+    'and report each of them identically, newValue included')
+assert.deepEqual(JSON.parse(JSON.stringify(written.getUndoStack()[0])), written.getUndoStack()[0],
+    'a step is still a plain object a host can serialize whole')
+
+// 4. Nothing is reconstructed afterwards: a write reports what it left even once something else
+// has written over it, which no later read of the register or the address could tell.
+await written.step() // jr $ra, back to the instruction after the jal
+await written.step() // addi $t0, $zero, 7, over the 0x1234 the earlier addi wrote
+assert.equal(written.getRegisterValue('$t0'), 7)
+const oldAddi = written.getUndoGroups().find(group => group.pc === addiPc)
+assert.equal(stepOf(oldAddi, BackStepAction.REGISTER_RESTORE).newValue, 0x1234,
+    'the earlier register write still reports the value it wrote, not the one there now')
+assert.equal(written.readMemoryBytes(WRITTEN_DATA + 8, 1)[0], 0x41)
+const oldSb = written.getUndoGroups().find(group => group.pc === sbPc)
+assert.equal(stepOf(oldSb, BackStepAction.MEMORY_RESTORE_BYTE).newValue, 0xff,
+    'and the earlier byte write reports the byte it left, not the byte there now')
+
+// The old values still restore exactly what they did before: undo is untouched by any of this.
+written.undo() // the addi $t0, $zero, 7
+assert.equal(written.getRegisterValue('$t0'), 0x1234)
+written.undo() // the jr $ra
+written.undo() // the jal
+assert.equal(written.programCounter, pcRestore.param1, 'back onto the jal')
+assert.equal(written.getRegisterValue('$ra'), 0)
+
 console.log(`ok - ran ${steps} instructions, printed "${output.join('')}"`)
 console.log(`ok - peripherals: ${writes.length} observed writes, slept ${slept.join(',')}ms, clock ${clock}`)
 console.log(`ok - register files: FPU $f2 ${coprocessor1[2].toString(16)}, flags ${presetFlags}`)
 console.log(`ok - pokes: ${groupKinds(poking).length} history entries left, ${pokeWrites.length} observed poke writes`)
 console.log(`ok - poke capacity: two instructions and a 12 byte poke fill ${sizedSlots} of 8 slots`)
+console.log(`ok - written values: ${written.getUndoStack().length} back steps, each reporting what it wrote`)

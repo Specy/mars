@@ -499,7 +499,9 @@ public class Memory extends Observable {
       int oldValue = storeRawWord(address, value);
       notifyAnyObservers(AccessNotice.WRITE, address, WORD_LENGTH_BYTES, value);
       if (Globals.getSettingsProperties().getBackSteppingEnabled()) {
-         Globals.program.getBackStepper().addMemoryRestoreRawWord(address, oldValue);
+         // The word the write left is the value it stored: setRawWord writes all four bytes as
+         // they are, so there is nothing to mask and nothing to read back.
+         Globals.program.getBackStepper().addMemoryRestoreRawWord(address, oldValue, value);
       }
       return oldValue;
    }
@@ -587,7 +589,7 @@ public class Memory extends Observable {
                Exceptions.ADDRESS_EXCEPTION_STORE, address);
       }
       return (Globals.getSettingsProperties().getBackSteppingEnabled())
-            ? Globals.program.getBackStepper().addMemoryRestoreWord(address, set(address, value, WORD_LENGTH_BYTES))
+            ? Globals.program.getBackStepper().addMemoryRestoreWord(address, set(address, value, WORD_LENGTH_BYTES), value)
             : set(address, value, WORD_LENGTH_BYTES);
    }
 
@@ -609,7 +611,9 @@ public class Memory extends Observable {
                Exceptions.ADDRESS_EXCEPTION_STORE, address);
       }
       return (Globals.getSettingsProperties().getBackSteppingEnabled())
-            ? Globals.program.getBackStepper().addMemoryRestoreHalf(address, set(address, value, 2))
+            // The low half is what landed in memory, and the old value set() returns holds only
+            // the bytes it replaced, so both sides are read at the width of the write.
+            ? Globals.program.getBackStepper().addMemoryRestoreHalf(address, set(address, value, 2), value & 0xffff)
             : set(address, value, 2);
    }
 
@@ -625,7 +629,8 @@ public class Memory extends Observable {
 
    public int setByte(int address, int value) throws AddressErrorException {
       return (Globals.getSettingsProperties().getBackSteppingEnabled())
-            ? Globals.program.getBackStepper().addMemoryRestoreByte(address, set(address, value, 1))
+            // As setHalf: only the low byte reached memory, so only the low byte is reported.
+            ? Globals.program.getBackStepper().addMemoryRestoreByte(address, set(address, value, 1), value & 0xff)
             : set(address, value, 1);
    }
 
