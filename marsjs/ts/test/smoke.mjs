@@ -1124,3 +1124,57 @@ console.log(`ok - register files: FPU $f2 ${coprocessor1[2].toString(16)}, flags
 console.log(`ok - pokes: ${groupKinds(poking).length} history entries left, ${pokeWrites.length} observed poke writes`)
 console.log(`ok - poke capacity: two instructions and a 12 byte poke fill ${sizedSlots} of 8 slots`)
 console.log(`ok - written values: ${written.getUndoStack().length} back steps, each reporting what it wrote`)
+
+// The exit is an entry of the history like any other instruction: the 7/26/06 do-nothing entry
+// every instruction gets was skipped on the exit path, so the newest entry after an exit was the
+// instruction before the exit. A host that reads the last executed instruction off the history then
+// named that one, and one undo after an exit rolled back two instructions. The program goes on past
+// the exit, as one with functions below `main` does.
+{
+    const makeExiting = () => {
+        const program = makeSingleFileMips(`
+    .text
+    .globl main
+main:
+    li   $t0, 1
+    li   $v0, 10
+    syscall
+helper:
+    addi $t0, $t0, 1
+    jr   $ra
+`)
+        registerHandlers(program, Object.fromEntries(HANDLER_NAMES.map(name => [name, unimplementedHandler(name)])))
+        program.setUndoSize(100)
+        const assembled = program.assemble()
+        assert.equal(assembled.hasErrors, false, `exit assembly failed: ${assembled.report}`)
+        program.initialize(true)
+        return program
+    }
+    const exitsOnTheSyscall = (program, label) => {
+        const [setV0, syscall] = Array.from(program.getCompiledStatements()).slice(1, 3)
+        const [top, below] = Array.from(program.getUndoGroups())
+        assert.equal(top.kind, 'instruction', `${label}: the newest entry is an instruction`)
+        assert.equal(top.pc, syscall.address, `${label}: and it is the exit syscall`)
+        assert.deepEqual(top.steps.map(step => step.action), [BackStepAction.DO_NOTHING],
+            `${label}: which wrote nothing`)
+        assert.equal(below.pc, setV0.address, `${label}: the entry below it is the instruction before the exit`)
+        return syscall
+    }
+
+    const ran = makeExiting()
+    assert.equal(await ran.simulateWithLimit(1_000), true, 'the run ends at the exit')
+    const syscall = exitsOnTheSyscall(ran, 'run')
+    ran.undo()
+    assert.equal(ran.programCounter, syscall.address, 'one undo puts the program back on the exit syscall')
+    assert.equal(ran.getRegisterValue('$v0'), 10, 'and leaves the instruction before it done')
+    assert.equal(await ran.step(), true, 'stepping the syscall exits again')
+    exitsOnTheSyscall(ran, 'run, undone and stepped')
+
+    const stepped = makeExiting()
+    let done
+    for (let i = 0; i < 3; i++) done = await stepped.step()
+    assert.equal(done, true, 'the third step is the exit')
+    exitsOnTheSyscall(stepped, 'step')
+}
+
+console.log('ok - exit: the exit syscall is the newest history entry and undoes on its own')

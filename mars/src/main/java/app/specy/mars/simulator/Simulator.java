@@ -359,6 +359,14 @@ public class Simulator extends Observable {
                         }
                     } catch (ProcessingException pe) {
                         if (pe.errors() == null) {
+                            // The exit is an instruction like any other, so it gets the entry the
+                            // 7/26/06 addition above gives every instruction. Without it the history
+                            // ends on the instruction before the exit: a host reading the last
+                            // executed instruction off it names that one, and one undo after the
+                            // exit rolls back two instructions.
+                            if (backSteppingEnabled) {
+                                backStepper.addDoNothing(pc);
+                            }
                             this.constructReturnReason = NORMAL_TERMINATION;
                             this.done = true;
                             SystemIO.resetFiles(); // close any files opened in MIPS program
