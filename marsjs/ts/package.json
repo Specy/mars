@@ -14,7 +14,7 @@
   "description": "The MARS mips interpreter in JS",
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts",
-    "test": "node test/smoke.mjs",
+    "test": "node test/smoke.mjs && node test/instruction-undo.mjs",
     "build:all": "cd ../../ && mvn clean install && cd marsjs/ts && npm run build"
   },
   "main": "./dist/index.js",
