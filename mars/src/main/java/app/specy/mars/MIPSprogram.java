@@ -60,6 +60,9 @@ public class MIPSprogram {
    private MacroPool macroPool;
    private ArrayList<SourceLine> sourceLineList;
    private Tokenizer tokenizer;
+   private AssemblerProfile assemblerProfile = AssemblerProfile.MARS;
+   private RuntimeLibrary runtimeLibrary;
+   private String entrySymbol;
 
    /**
     * Produces list of source statements that comprise the program.
@@ -263,8 +266,39 @@ public class MIPSprogram {
     **/
 
    public void prepareForAssembly(String entryFile, MIPSFileSystem files) throws ProcessingException {
+      prepareForAssembly(entryFile, files, AssemblerProfile.MARS);
+   }
+
+   /**
+    * Reads the entry file and prepares it for the given assembly dialect: the MARS profile
+    * tokenizes it with the educational tokenizer, the GNU compiler profile only expands its
+    * includes and keeps display tokens, since its own assembler parses the lines.
+    *
+    * @param entryFile canonical path of the entry file
+    * @param files virtual source tree used to resolve includes
+    * @param profile the assembly dialect of this program
+    * @throws ProcessingException if tokenization or include expansion fails
+    **/
+
+   public void prepareForAssembly(String entryFile, MIPSFileSystem files, AssemblerProfile profile) throws ProcessingException {
+      assemblerProfile = Objects.requireNonNull(profile);
       readSource(entryFile, files.read(entryFile));
-      tokenize(files);
+      if (profile == AssemblerProfile.GNU_COMPILER_V1) {
+         tokenList = GnuAssembler.prepare(this, files);
+         localSymbolTable = new SymbolTable(currentFileName);
+      } else {
+         tokenize(files);
+      }
+   }
+
+   /**
+    * The library whose members resolve globals this program uses without defining, and the
+    * global the link must define, which also pulls its member. Either may be null.
+    **/
+
+   public void setLinkInputs(RuntimeLibrary library, String entrySymbol) {
+      this.runtimeLibrary = library;
+      this.entrySymbol = entrySymbol == null || entrySymbol.isEmpty() ? null : entrySymbol;
    }
 
    /**
@@ -313,14 +347,26 @@ public class MIPSprogram {
    public ErrorList assemble(List<MIPSprogram> MIPSprogramsToAssemble, boolean extendedAssemblerEnabled,
          boolean warningsAreErrors) throws ProcessingException {
       this.backStepper = null;
-      Assembler asm = new Assembler();
-      this.machineList = asm.assemble(MIPSprogramsToAssemble, extendedAssemblerEnabled, warningsAreErrors);
+      ErrorList errors;
+      if (assemblerProfile == AssemblerProfile.GNU_COMPILER_V1) {
+         GnuAssembler gnu = new GnuAssembler(List.of(this), runtimeLibrary, entrySymbol);
+         this.machineList = gnu.assemble();
+         errors = gnu.getErrors();
+         if (warningsAreErrors && errors.warningsOccurred()) {
+            throw new ProcessingException(errors);
+         }
+      } else {
+         Assembler asm = new Assembler();
+         asm.setLinkInputs(runtimeLibrary, entrySymbol);
+         this.machineList = asm.assemble(MIPSprogramsToAssemble, extendedAssemblerEnabled, warningsAreErrors);
+         errors = asm.getErrorList();
+      }
       this.machineListPCMap = new HashMap<Integer, ProgramStatement>();
       for(ProgramStatement ps : machineList) {
          machineListPCMap.put(ps.getAddress(), ps);
       }
       this.backStepper = new BackStepper();
-      return asm.getErrorList();
+      return errors;
    }
 
    public ProgramStatement getMachineStatement(int address) {

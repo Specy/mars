@@ -201,6 +201,17 @@ public class RegisterFile {
    public static Register getUserRegister(String Rname) {
       Register reg = null;
       if (Rname.charAt(0) == '$') {
+         // Only a name that can start a number is parsed as one: $sp, like every other mnemonic,
+         // would be rejected by throwing, which costs more than the search below under TeaVM.
+         char first = Rname.length() > 1 ? Rname.charAt(1) : ' ';
+         if (!(first >= '0' && first <= '9' || first == '-' || first == '+')) {
+            for (int i = 0; i < regFile.length; i++) {
+               if (Rname.equals(regFile[i].getName())) {
+                  return regFile[i];
+               }
+            }
+            return null;
+         }
          try {
             // check for register number 0-31.
             reg = regFile[Binary.stringToInt(Rname.substring(1))]; // KENV 1/6/05
@@ -230,6 +241,21 @@ public class RegisterFile {
 
    public static void initializeProgramCounter(int value) {
       programCounter.setValue(value);
+   }
+
+   /**
+    * Starts at the global {@code label} when it names text, and at the reset value otherwise.
+    *
+    * @param label the entry symbol, a global label
+    **/
+
+   public static void initializeProgramCounter(String label) {
+      int address = Globals.symbolTable.getAddress(label);
+      if (address != SymbolTable.NOT_FOUND && (Memory.inTextSegment(address) || Memory.inKernelTextSegment(address))) {
+         initializeProgramCounter(address);
+      } else {
+         initializeProgramCounter(programCounter.getResetValue());
+      }
    }
 
    /**

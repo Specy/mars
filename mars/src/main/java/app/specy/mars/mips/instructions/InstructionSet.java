@@ -85,6 +85,7 @@ public class InstructionSet {
         /*
          * Here is where the parade begins. Every instruction is added to the set here.
          */
+        byName = null;
 
         // //////////////////////////////////// BASIC INSTRUCTIONS START HERE
         // ////////////////////////////////
@@ -2856,17 +2857,22 @@ public class InstructionSet {
      * @return list of corresponding Instruction object(s), or null if not found.
      */
     public ArrayList matchOperator(String name) {
-        ArrayList matchingInstructions = null;
-        // Linear search for now....
-        for (int i = 0; i < instructionList.size(); i++) {
-            if (((Instruction) instructionList.get(i)).getName().equalsIgnoreCase(name)) {
-                if (matchingInstructions == null)
-                    matchingInstructions = new ArrayList();
-                matchingInstructions.add(instructionList.get(i));
+        // Every operand of every statement is looked up here, so the list is indexed by lower-case
+        // name instead of searched; the index is rebuilt whenever the list has changed size, which
+        // is what populate() and any caller adding to getInstructionList() do.
+        if (byName == null || indexedSize != instructionList.size()) {
+            byName = new HashMap<String, ArrayList<Instruction>>();
+            for (Instruction inst : instructionList) {
+                byName.computeIfAbsent(inst.getName().toLowerCase(), key -> new ArrayList<Instruction>()).add(inst);
             }
+            indexedSize = instructionList.size();
         }
-        return matchingInstructions;
+        ArrayList<Instruction> matching = byName.get(name.toLowerCase());
+        return matching == null ? null : new ArrayList<Instruction>(matching);
     }
+
+    private HashMap<String, ArrayList<Instruction>> byName;
+    private int indexedSize = -1;
 
     /**
      * Given a string, will return the Instruction object(s) from the instruction

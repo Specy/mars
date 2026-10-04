@@ -177,7 +177,18 @@ public final class TokenTypes {
       // Classify based on # bits needed to represent in binary
       // This is needed because most immediate operands limited to 16 bits
       // others limited to 5 bits unsigned (shift amounts) others 32 bits.
-      try {
+
+      // Only a token that can start a number is parsed as one: Binary.stringToInt and
+      // Double.parseDouble reject every other token by throwing, and a thrown exception costs far
+      // more than the rest of this method under TeaVM, which classifies every identifier and
+      // mnemonic here.
+      char first = value.charAt(0);
+      char second = value.length() > 1 ? value.charAt(1) : ' ';
+      boolean numeric = (first >= '0' && first <= '9') || ((first == '-' || first == '+') && second >= '0' && second <= '9');
+      boolean real = numeric || first == '.' && second >= '0' && second <= '9'
+            || (first == '-' || first == '+') && (second == '.' || second == 'N' || second == 'I')
+            || first == 'N' || first == 'I';
+      if (numeric) try {
 
          int i = Binary.stringToInt(value); // KENV 1/6/05
 
@@ -247,7 +258,7 @@ public final class TokenTypes {
       // See if it is a real (fixed or floating point) number. Note that parseDouble()
       // accepts integer values but if it were an integer literal we wouldn't get this
       // far.
-      try {
+      if (real) try {
          Double.parseDouble(value);
          return TokenTypes.REAL_NUMBER;
       } catch (NumberFormatException e) {

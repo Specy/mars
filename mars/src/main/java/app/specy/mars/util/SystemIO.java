@@ -279,8 +279,9 @@ public class SystemIO {
          // array of bytes.
 
          if(fd == STDIN) {
-            io.stdIn(myBuffer, lengthRequested);
-            return 0;
+            int count = io.stdIn(myBuffer, lengthRequested);
+            if (count < 0) fileErrorString = "IO Exception on read of standard input";
+            return count < 0 ? -1 : Math.min(count, lengthRequested);
          } else if (fd == STDOUT || fd == STDERR) {
             throw new MIPSIOError("Cannot read from STDOUT or STDERR");
          }
@@ -303,6 +304,33 @@ public class SystemIO {
       return retValue;
 
    } // end readFromFile
+
+   /**
+    * Moves an open file's position, as lseek does.
+    *
+    * @param fd     file descriptor
+    * @param offset the offset from {@code base}
+    * @param base   0 for the start of the file, 1 for the current position, 2 for the end
+    * @return the new position, or -1 on error
+    */
+   public static int seek(int fd, int offset, int base) {
+      // Descriptors above STDERR belong to the host, which knows whether one is open; the
+      // standard streams are a terminal and have no position.
+      if (fd <= STDERR) {
+         fileErrorString = "File descriptor " + fd + " cannot seek";
+         return -1;
+      }
+      if (base < 0 || base > 2) {
+         fileErrorString = "Invalid seek origin " + base;
+         return -1;
+      }
+      try {
+         return io.seekFile(fd, offset, base);
+      } catch (MIPSIOError e) {
+         fileErrorString = "IO Exception on seek of file with fd " + fd;
+         return -1;
+      }
+   }
 
    /**
     * Open a file for either reading or writing. Note that read/write flag is NOT

@@ -1,0 +1,6 @@
+{
+  "captured": "2026-10-04",
+  "toolchain": "GNU as of mips gcc 14.2.0 (cmipsg1420) on Compiler Explorer, filters.binaryObject, -EL",
+  "preparation": "layout.s without main, li and syscall, as a top-level asm statement in C. Each la names a local label, so its R_MIPS_LO16 addend is the label's offset in .data; common is its own symbol.",
+  "dataOffsets": { "a": 1, "b": 16, "end": 32, "moved": 40, "kept": 41, "unaligned": 49, "half": 54, "after": 56, "dbl": 64 }
+}

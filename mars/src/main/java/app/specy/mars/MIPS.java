@@ -4,6 +4,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import app.specy.mars.assembler.AssemblerProfile;
+import app.specy.mars.assembler.RuntimeLibrary;
 import app.specy.mars.assembler.SourceLine;
 import app.specy.mars.assembler.Symbol;
 import app.specy.mars.assembler.SymbolTable;
@@ -51,6 +53,12 @@ public class MIPS {
         return this.main.getMachineStatement(address);
     }
 
+    /** The address of a defined label or alias, local to the entry program or global, or -1. */
+    public int getAddressOfLabel(String label) {
+        requireAssembled();
+        return main.getLocalSymbolTable().getAddressLocalOrGlobal(label);
+    }
+
     public List<ProgramStatement> getParsedStatements() {
         requireAssembled();
         return this.main.getParsedList();
@@ -73,12 +81,31 @@ public class MIPS {
                 .toList();
     }
 
-    private MIPS(String entryFile, MemoryFileSystem files) {
+    private final AssemblerProfile assemblerProfile;
+    private RuntimeLibrary runtimeLibrary;
+    private String entrySymbol;
+
+    /**
+     * Links {@code library}'s members for the globals the program uses and does not define, and
+     * starts execution at {@code entrySymbol} instead of the global {@code main}. The entry symbol
+     * must be defined by the link and pulls its own member. Either may be null.
+     */
+    public void setLinkInputs(RuntimeLibrary library, String entrySymbol) {
+        this.runtimeLibrary = library;
+        this.entrySymbol = entrySymbol == null || entrySymbol.isEmpty() ? null : entrySymbol;
+    }
+
+    private MIPS(String entryFile, MemoryFileSystem files, AssemblerProfile profile) {
         this.entryFile = entryFile;
         this.files = files;
+        this.assemblerProfile = java.util.Objects.requireNonNull(profile);
     }
 
     public static MIPS fromFs(String entryFile, MIPSFileSystem sourceFiles) {
+        return fromFs(entryFile, sourceFiles, AssemblerProfile.MARS);
+    }
+
+    public static MIPS fromFs(String entryFile, MIPSFileSystem sourceFiles, AssemblerProfile profile) {
         SourcePath.requireCanonical(entryFile);
         if (sourceFiles == null) {
             throw new IllegalArgumentException("Source set must be an object");
@@ -102,7 +129,7 @@ public class MIPS {
         if (!paths.contains(entryFile)) {
             throw new IllegalArgumentException("Entry file is not present in the source set: " + entryFile);
         }
-        return new MIPS(entryFile, snapshot);
+        return new MIPS(entryFile, snapshot, profile);
     }
 
     public static void initializeMIPS() {
@@ -117,7 +144,8 @@ public class MIPS {
         Globals.symbolTable.clear();
         Globals.memory.clear();
         main = new MIPSprogram();
-        main.prepareForAssembly(entryFile, files);
+        main.prepareForAssembly(entryFile, files, assemblerProfile);
+        main.setLinkInputs(runtimeLibrary, entrySymbol);
         ErrorList result = main.assemble(List.of(main), true);
         Globals.program = main;
         assembled = true;
@@ -129,7 +157,8 @@ public class MIPS {
         RegisterFile.resetRegisters();
         Coprocessor0.resetRegisters();
         Coprocessor1.resetRegisters();
-        RegisterFile.initializeProgramCounter(startAtMain);
+        if (entrySymbol != null) RegisterFile.initializeProgramCounter(entrySymbol);
+        else RegisterFile.initializeProgramCounter(startAtMain);
         Stack.clearCallStack();
         terminated = false;
     }

@@ -22,6 +22,20 @@ ignored.
 
 Before running the simulator, you must assemble and initialize it.  You can then step through the program, simulate with breakpoints, or simulate with a limit.
 
+The optional third factory argument selects the assembly profile, the entry symbol and the libraries to link:
+
+```typescript
+const core = makeMipsFromFiles(files, 'main.s', { assemblerProfile: 'gnu-compiler-v1' });
+```
+
+Omission selects `mars`, the educational MARS dialect with its macros and pseudo instructions, which is unchanged. `MIPS.assemblerProfiles` lists the supported profiles; every present invalid profile throws. `gnu-compiler-v1` is a bounded static GNU assembler for the MIPS32 output of GCC (`-march=mips32 -mabi=32 -mno-abicalls -fno-pic -G0 -fno-delayed-branch -mfp32 -mhard-float -EL`): independent named `.text*`, `.rodata*`/`.rdata`, `.data*`, `.bss*` and common sections, little-endian data with GNU as's MIPS self-alignment of `.half`/`.word`/`.dword`/`.float`/`.double` (`.align 0` turns it off), byte-valued string escapes, bounded expressions and aliases, numeric labels, `%hi`/`%lo`, PC-relative branches and absolute jumps. GCC's macros get GNU as's fixed expansions (`move`, `li`, `la`, `b`, `bal`, `beqz`, `bnez`, `neg`, `negu`, `not`, `slt`/`sltu` with an immediate, `sll`/`srl`/`sra` with a register amount, `div $0,…`, a bare load or store address through `$at`), other register-only macros use MARS's fixed templates (`seq`, `sge`, `abs`, `rol`, `bge`, `ulw`, `mfc1.d`, …), and `$fccN` condition codes are accepted. `.set` options that leave encodings unchanged (`noreorder`, `nomacro`, `noat`, `nomips16`, `push`/`pop`, …), `.module fp=32`, `.nan`, `.gnu_attribute 4,1`, `.ent`/`.end`/`.frame`/`.mask` and debug sections are accepted; MIPS16, microMIPS, 64-bit FPU modes, position-independent code, unsupported relocations and unresolved symbols are errors.
+
+MARS executes branches without delay slots: a taken branch skips the instruction after it, and a link saves that instruction's address. In `.set noreorder` code every delay slot must therefore hold a `nop`, which is what GCC writes with `-fno-delayed-branch`, and a call returns to its `nop`; a filled slot is an error. In reorder mode no slot is emitted at all. Conditional traps lose their code field, which MARS does not encode.
+
+Units link with ld semantics: global and weak symbols (an undefined weak reference is zero), COMDAT groups (the first copy is kept), `.init_array`/`.fini_array` (and their `.NNNNN` priority sections, in priority order before the plain one) with ld-provided `__init_array_start`/`__init_array_end` bounds, and global labels in the global symbol table. A conditional branch whose target ends up beyond its ±128 KiB reach is relaxed into the inverted branch over a `j`. `libraries` are archives of `gnu-compiler-v1` members with an index naming the member that defines each global: a member is pulled only for a global the program uses and does not define, transitively, after the program's own sections; a weak reference pulls nothing unless the library lists the symbol in `resolveWeak`. A MARS-dialect program can call members too: they are placed after its text and data, a global it defines is never pulled, and a program that pulls no member assembles byte for byte as before. `entrySymbol` (for example `_start`) must be defined by the link, pulls its own member, and is where `initialize` starts execution. `MIPS.analyzeGnuUnit(path, source)` reports what one unit defines and needs, for building an index. Errors read `Unresolved symbol: name` on the referencing line, `Multiple definition of name, first defined in path` and `Undefined entry symbol: name`.
+
+`getAddressOfLabel(name)` returns a defined label/alias address after successful assembly, or `-1` when absent. Profile state is per program; memory and execution state retain the single-instance constraint below.
+
 ⚠️**WARNING**⚠️ You must have only one instance of the simulator at a time. Memory, registers, and other state are shared between instances. 
 
 ```typescript

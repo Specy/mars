@@ -273,8 +273,24 @@ public class JsMIPSIO extends MIPSIO {
     }
 
     @Override
-    public void stdIn(byte[] buffer, int length) {
-        callHandler("stdIn", JSArray.of(buffer), JSNumber.valueOf(length));
+    public int stdIn(byte[] buffer, int length) {
+        JSObject result = callHandler("stdIn", JSArray.of(buffer), JSNumber.valueOf(length));
+        if (result instanceof JSArray) {
+            JSArray<JSObject> array = (JSArray<JSObject>) result;
+            if (array.getLength() == 2) {
+                int count = ((JSNumber) array.get(0)).intValue();
+                JSArray<JSNumber> bytes = (JSArray<JSNumber>) array.get(1);
+                int copied = Math.min(Math.min(bytes.getLength(), length), buffer.length);
+                for (int i = 0; i < copied; i++) buffer[i] = (byte) bytes.get(i).intValue();
+                return count < 0 ? -1 : Math.min(count, copied);
+            }
+        }
+        throw new IllegalArgumentException("Handler stdIn must return a tuple of the byte count and the bytes read");
+    }
+
+    @Override
+    public int seekFile(int fileDescriptor, int offset, int whence) throws MIPSIOError {
+        return callIntHandler("seekFile", JSNumber.valueOf(fileDescriptor), JSNumber.valueOf(offset), JSNumber.valueOf(whence));
     }
 
     @Override

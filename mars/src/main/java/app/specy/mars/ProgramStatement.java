@@ -558,7 +558,24 @@ public class ProgramStatement {
      * @return The Basic Assembly statement.
      **/
     public String getPrintableBasicAssemblyStatement() {
-        return basicStatementList.toString();
+        return basicStatementList == null ? (basicAssemblyStatement == null ? "" : basicAssemblyStatement) : basicStatementList.toString();
+    }
+
+    /**
+     * A text-image padding word with directive provenance. It executes as the instruction it
+     * encodes, as hardware would, so a zero word is a nop and an undecodable one traps.
+     */
+    public static ProgramStatement rawPadding(int binary, int address, MIPSprogram program, app.specy.mars.assembler.SourceLine source) {
+        ProgramStatement statement = new ProgramStatement(binary, address);
+        statement.sourceMIPSprogram = program;
+        statement.sourcePath = source.getSourcePath();
+        statement.sourceLine = source.getLineNumber();
+        statement.source = source.getSource();
+        statement.basicStatementList = null;
+        statement.basicAssemblyStatement = ".padding";
+        String bits = Integer.toBinaryString(binary);
+        statement.machineStatement = "00000000000000000000000000000000".substring(bits.length()) + bits;
+        return statement;
     }
 
     /**

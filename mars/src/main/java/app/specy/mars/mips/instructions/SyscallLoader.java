@@ -99,6 +99,7 @@ public class SyscallLoader {
       add(new SyscallSbrk());
       add(new SyscallSleep());
       add(new SyscallTime());
+      add(new SyscallLSeek());
 
       syscallList = processSyscallNumberOverrides(syscallList);
       return;

@@ -416,7 +416,9 @@ public class Coprocessor1 {
 
    public static Register getRegister(String rName) {
       Register reg = null;
-      if (rName.charAt(0) == '$' && rName.length() > 1 && rName.charAt(1) == 'f') {
+      if (rName.charAt(0) == '$' && rName.length() > 2 && rName.charAt(1) == 'f'
+            // only a number is parsed: anything else would be rejected by throwing
+            && (rName.charAt(2) >= '0' && rName.charAt(2) <= '9' || rName.charAt(2) == '-' || rName.charAt(2) == '+')) {
          try {
             // check for register number 0-31.
             reg = registers[Binary.stringToInt(rName.substring(2))]; // KENV 1/6/05

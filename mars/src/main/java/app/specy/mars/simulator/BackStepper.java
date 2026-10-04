@@ -635,14 +635,33 @@ public class BackStepper {
         // enhances
         // runtime performance by not having to create or recycle them during MIPS
         // program execution.
+        // The slots start empty: a slot's BackStep is created the first time the stack reaches it,
+        // so the capacity can be large enough for a library call without a short program paying for
+        // it, and once the stack has wrapped execution never creates or junks one.
         private BackstepStack(int capacity) {
             this.capacity = capacity;
             this.size = 0;
             this.top = -1;
             this.stack = new BackStep[capacity];
-            for (int i = 0; i < capacity; i++) {
-                this.stack[i] = new BackStep();
-            }
+        }
+
+        // The object in the slot the top has just moved onto, created the first time it is used.
+        private BackStep slot() {
+            BackStep step = stack[top];
+            if (step == null) stack[top] = step = new BackStep();
+            return step;
+        }
+
+        /** How many entries the stack holds. */
+        public int size() {
+            return size;
+        }
+
+        /** The entry {@code index} places below the top, without copying the stack; 0 is the top. */
+        public BackStep fromTop(int index) {
+            if (index < 0 || index >= size) throw new IndexOutOfBoundsException("No back step " + index);
+            int slot = top - index;
+            return stack[slot < 0 ? slot + capacity : slot];
         }
 
         public BackStep[] getStack() {
@@ -685,7 +704,7 @@ public class BackStepper {
             advance();
             // We'll re-use existing objects rather than create/discard each time.
             // Must use assign() method rather than series of assignment statements!
-            stack[top].assign(act, programCounter, parm1, parm2, parm3);
+            slot().assign(act, programCounter, parm1, parm2, parm3);
         }
 
         private void push(int act, int programCounter, int parm1, int parm2) {
@@ -696,7 +715,7 @@ public class BackStepper {
         // has been closed, so it takes the ordinary slot an instruction's step would.
         private void pushPoke(int group, int[][] writes) {
             advance();
-            stack[top].assignPoke(group, writes);
+            slot().assignPoke(group, writes);
         }
 
         private void push(int act, int programCounter, int parm1) {

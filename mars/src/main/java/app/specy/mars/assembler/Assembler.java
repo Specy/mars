@@ -3,7 +3,9 @@ package app.specy.mars.assembler;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import app.specy.mars.ErrorList;
 import app.specy.mars.ErrorMessage;
@@ -72,6 +74,17 @@ public class Assembler {
    private UserKernelAddressSpace dataAddress;
    private DataSegmentForwardReferences currentFileDataSegmentForwardReferences,
          accumulatedDataSegmentForwardReferences;
+   private RuntimeLibrary runtimeLibrary;
+   private String entrySymbol;
+
+   /**
+    * The library whose members resolve globals the program uses without defining, and the global
+    * the link must define, which also pulls its member. Either may be null.
+    */
+   public void setLinkInputs(RuntimeLibrary library, String entrySymbol) {
+      this.runtimeLibrary = library;
+      this.entrySymbol = entrySymbol == null || entrySymbol.isEmpty() ? null : entrySymbol;
+   }
 
    /**
     * Parse and generate machine code for the given MIPS program. It must have
@@ -291,6 +304,47 @@ public class Assembler {
          currentFileDataSegmentForwardReferences.clear();
       } // end of first-pass loop for each MIPSprogram
 
+      // Library members resolve the globals the program uses and does not define. They are
+      // linked after its user text and data, before the forward data references and the second
+      // pass resolve against the global symbol table, so neither can tell a library global
+      // from one of the program's own. A program that needs no member assembles exactly as
+      // it did without a library.
+      List<ProgramStatement> libraryStatements = new ArrayList<ProgramStatement>();
+      if ((runtimeLibrary != null || entrySymbol != null) && !errors.errorsOccurred()) {
+         Set<String> undefined = new LinkedHashSet<String>();
+         if (entrySymbol != null && Globals.symbolTable.getAddress(entrySymbol) == SymbolTable.NOT_FOUND) {
+            undefined.add(entrySymbol);
+         }
+         for (MIPSprogram program : tokenizedProgramFiles) {
+            for (ProgramStatement statement : program.getParsedList()) {
+               for (int i = 0; i < statement.getOriginalTokenList().size(); i++) {
+                  Token token = statement.getOriginalTokenList().get(i);
+                  if (token.getType() == TokenTypes.IDENTIFIER &&
+                        program.getLocalSymbolTable().getAddressLocalOrGlobal(token.getValue()) == SymbolTable.NOT_FOUND)
+                     undefined.add(token.getValue());
+               }
+            }
+         }
+         accumulatedDataSegmentForwardReferences.collectUndefined(undefined);
+         boolean needed = false;
+         if (runtimeLibrary != null) {
+            for (String name : undefined) needed |= runtimeLibrary.defines(name);
+         }
+         if (needed) {
+            try {
+               libraryStatements = new GnuAssembler(new ArrayList<MIPSprogram>(), runtimeLibrary, null)
+                     .linkAfter(undefined, textAddress.address[textAddress.USER], dataAddress.address[dataAddress.USER],
+                           tokenizedProgramFiles.get(0).getFilename());
+            } catch (ProcessingException exception) {
+               for (ErrorMessage message : exception.errors().getErrorMessages()) errors.add(message);
+            }
+         }
+         if (entrySymbol != null && !errors.errorsOccurred() &&
+               Globals.symbolTable.getAddress(entrySymbol) == SymbolTable.NOT_FOUND) {
+            errors.add(new ErrorMessage(tokenizedProgramFiles.get(0), 1, 1, "Undefined entry symbol: " + entrySymbol));
+         }
+      }
+
       // Have processed all source files. Attempt to resolve any remaining forward
       // label
       // references from global symbol table. Those that remain unresolved are
@@ -422,6 +476,8 @@ public class Assembler {
                   "Invalid address for text segment: " + e.getAddress()));
          }
       }
+      // The members were written to memory when they were linked.
+      this.machineList.addAll(libraryStatements);
       // Aug. 24, 2005 Ken Vollmar
       // Ensure that I/O "file descriptors" are initialized for a new program run
       SystemIO.resetFiles();
@@ -1680,6 +1736,15 @@ public class Assembler {
             }
          }
          return count;
+      }
+
+      // Adds the names still unresolved after the program's own symbol tables.
+      private void collectUndefined(Set<String> names) {
+         for (int i = 0; i < forwardReferenceList.size(); i++) {
+            DataSegmentForwardReference entry = (DataSegmentForwardReference) forwardReferenceList.get(i);
+            if (Globals.symbolTable.getAddress(entry.token.getValue()) == SymbolTable.NOT_FOUND)
+               names.add(entry.token.getValue());
+         }
       }
 
       // Call this when you are confident that remaining list entries are to

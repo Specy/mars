@@ -44,6 +44,9 @@ public class SymbolTable {
    private static String startLabel = "main";
    private String filename;
    private List<Symbol> table;
+   // The same symbols by name: labels are looked up for every operand that names one, and a long
+   // program made the linear search of the list quadratic. Names are unique within a table.
+   private Map<String, Symbol> byName = new HashMap<String, Symbol>();
    // Note -1 is legal 32 bit address (0xFFFFFFFF) but it is the high address in
    // kernel address space so highly unlikely that any symbol will have this as
    // its associated address!
@@ -78,6 +81,7 @@ public class SymbolTable {
       } else {
          Symbol s = new Symbol(label, address, b);
          table.add(s);
+         byName.put(label, s);
          if (Globals.debug)
             System.out.println("The symbol " + label + " with address " + address + " has been added to the "
                   + this.filename + " symbol table.");
@@ -97,6 +101,7 @@ public class SymbolTable {
       for (int i = 0; i < table.size(); i++) {
          if (((Symbol) (table.get(i))).getName().equals(label)) {
             table.remove(i);
+            byName.remove(label);
             if (Globals.debug)
                System.out
                      .println("The symbol " + label + " has been removed from the " + this.filename + " symbol table.");
@@ -114,12 +119,8 @@ public class SymbolTable {
     *         symbol table.
     **/
    public int getAddress(String s) {
-      for (int i = 0; i < table.size(); i++) {
-         if (((Symbol) (table.get(i))).getName().equals(s)) {
-            return ((Symbol) table.get(i)).getAddress();
-         }
-      }
-      return NOT_FOUND;
+      Symbol symbol = byName.get(s);
+      return symbol == null ? NOT_FOUND : symbol.getAddress();
    }
 
    /**
@@ -145,12 +146,7 @@ public class SymbolTable {
     **/
 
    public Symbol getSymbol(String s) {
-      for (int i = 0; i < table.size(); i++) {
-         if (((Symbol) (table.get(i))).getName().equals(s)) {
-            return (Symbol) table.get(i);
-         }
-      }
-      return null;
+      return byName.get(s);
    }
 
    /**
@@ -269,6 +265,7 @@ public class SymbolTable {
 
    public void clear() {
       table = new ArrayList();
+      byName = new HashMap<String, Symbol>();
    }
 
    /**

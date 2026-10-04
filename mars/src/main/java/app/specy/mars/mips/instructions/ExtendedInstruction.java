@@ -568,12 +568,16 @@ public class ExtendedInstruction extends Instruction {
          for (int op = 1; op < theTokenList.size(); op++) {
             String token = theTokenList.get(op).getValue();
             int regNumber;
-            try { // if token is a RegisterFile register, substitute next higher register
-               regNumber = RegisterFile.getUserRegister(token).getNumber();
+            // If token is a RegisterFile register, substitute next higher register. Tested rather
+            // than caught: under TeaVM a null dereference is a JavaScript TypeError, not a
+            // NullPointerException, so the catch upstream relied on never ran.
+            Register register = RegisterFile.getUserRegister(token);
+            if (register != null) {
+               regNumber = register.getNumber();
                if (regNumber >= 0) {
                   instruction = substitute(instruction, "NR" + op, "$" + (regNumber + 1));
                }
-            } catch (NullPointerException e) { // not in RegisterFile, must be Coprocessor1 register
+            } else { // not in RegisterFile, must be Coprocessor1 register
                regNumber = Coprocessor1.getRegisterNumber(token);
                if (regNumber >= 0) {
                   instruction = substitute(instruction, "NR" + op, "$f" + (regNumber + 1));
