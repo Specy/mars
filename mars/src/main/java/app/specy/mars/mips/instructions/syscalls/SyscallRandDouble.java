@@ -1,7 +1,5 @@
 package app.specy.mars.mips.instructions.syscalls;
 
-import java.util.Random;
-
 import app.specy.mars.*;
 import app.specy.mars.mips.hardware.*;
 import app.specy.mars.simulator.*;
@@ -59,15 +57,9 @@ public class SyscallRandDouble extends AbstractSyscall {
       // Return: $f0 = the next pseudorandom, uniformly distributed double value
       // between 0.0 and 1.0
       // from this random number generator's sequence.
-      Integer index = new Integer(RegisterFile.getValue(4));
-      Random stream = (Random) RandomStreams.randomStreams.get(index);
-      if (stream == null) {
-         stream = new Random(); // create a non-seeded stream
-
-         RandomStreams.randomStreams.put(index, stream);
-      }
+      double value = RandomStreams.forDraw(RegisterFile.getValue(4)).nextDouble();
       try {
-         Coprocessor1.setRegisterPairToDouble(0, stream.nextDouble());
+         Coprocessor1.setRegisterPairToDouble(0, value);
       } catch (InvalidRegisterAccessException e) { // register ID error in this method
          throw new ProcessingException(statement,
                "Internal error storing double to register (syscall " + this.getNumber() + ")",

@@ -1,6 +1,7 @@
 package app.specy.mars.mips.instructions.syscalls;
 
 import app.specy.mars.*;
+import app.specy.mars.simulator.ProgramExit;
 import app.specy.mars.mips.hardware.*;
 import app.specy.mars.util.*;
 
@@ -55,7 +56,7 @@ public class SyscallExit2 extends AbstractSyscall {
     * return value is ignored.
     */
    public void simulate(ProgramStatement statement) throws ProcessingException {
-      Globals.exitCode = RegisterFile.getValue(4);
+      ProgramExit.exit(RegisterFile.getValue(4));
       throw new ProcessingException(); // empty error list
    }
 }

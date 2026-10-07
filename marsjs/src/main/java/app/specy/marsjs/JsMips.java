@@ -16,13 +16,14 @@ import app.specy.mars.mips.hardware.Coprocessor1;
 import app.specy.mars.mips.hardware.Register;
 import app.specy.mars.mips.hardware.RegisterFile;
 import app.specy.mars.simulator.BackStepper;
+import app.specy.mars.simulator.Simulator;
 import org.teavm.jso.JSExceptions;
 import org.teavm.jso.JSExport;
 import org.teavm.jso.JSObject;
 import org.teavm.jso.JSProperty;
 import org.teavm.jso.core.JSArray;
-import org.teavm.jso.core.JSBoolean;
 import org.teavm.jso.core.JSFunction;
+import org.teavm.jso.core.JSNumber;
 import org.teavm.jso.core.JSPromise;
 import org.teavm.jso.function.JSConsumer;
 
@@ -122,6 +123,15 @@ public class JsMips {
         return this.main.getAddressOfLabel(label);
     }
 
+    /**
+     * Where the program's heap, and so the first block sbrk hands out, starts: 0x10040000, or the
+     * first page after static data in a GNU-profile program whose static data reaches past it.
+     */
+    @JSExport
+    public int getHeapStart() {
+        return this.main.getHeapStart();
+    }
+
     @JSExport
     public JsMipsTokenizedLine[] getTokenizedLines() {
         List<TokenList> tokenizedLines = this.main.getTokens();
@@ -143,7 +153,12 @@ public class JsMips {
 
     @JSExport
     public void initialize(boolean startAtMain) {
+        if (executingInstructions > 0 || openPoke != null) {
+            throw new IllegalStateException("Cannot initialize during an instruction or poke");
+        }
         this.main.initialize(startAtMain);
+        openPoke = null;
+        pokeRecords.clear();
     }
 
 
@@ -161,7 +176,7 @@ public class JsMips {
     private static boolean workerStarted;
 
     private interface Body {
-        boolean run() throws ProcessingException;
+        Simulator.Reason run() throws ProcessingException;
     }
 
     private static void workerLoop() {
@@ -205,23 +220,35 @@ public class JsMips {
      */
     private int executingInstructions;
 
-    private JSPromise<JSBoolean> run(Body body) {
+    /**
+     * Runs {@code body} on the simulation coroutine. The promise resolves to why the run stopped,
+     * as the ordinal of {@link Simulator.Reason} that the TS StopReason enum mirrors, and rejects
+     * with a typed RuntimeError ({@link JsRuntimeError}) when the program fails.
+     */
+    private JSPromise<JSNumber> run(Body body) {
         executingInstructions++;
         boolean submitted = false;
         try {
-            JSPromise<JSBoolean> promise = JSPromise.create((resolve, reject) -> submit(() -> {
-                boolean result;
+            JSPromise<JSNumber> promise = JSPromise.create((resolve, reject) -> submit(() -> {
+                Simulator.Reason result;
                 try {
                     result = body.run();
                 } catch (Throwable t) {
-                    reject.accept(JSExceptions.getJSException(t));
+                    JSObject error;
+                    try {
+                        error = rejection(t);
+                    } catch (Throwable unreported) {
+                        // Never leave the promise unsettled: the plain error still says what failed.
+                        error = JSExceptions.getJSException(t);
+                    }
+                    reject.accept(error);
                     return;
                 } finally {
                     // Exactly once, on every path out of the body, so that a failed step cannot
                     // leave the core refusing pokes for the rest of the session.
                     executingInstructions--;
                 }
-                resolve.accept(JSBoolean.valueOf(result));
+                resolve.accept(JSNumber.valueOf(result.ordinal()));
             }));
             submitted = true;
             return promise;
@@ -233,14 +260,45 @@ public class JsMips {
         }
     }
 
-    @JSExport
-    public JSPromise<JSBoolean> step() {
-        return run(() -> this.main.step());
+    /**
+     * A runtime failure of the program crosses as a typed RuntimeError; anything else, such as a
+     * call on a program that did not assemble, as the error it is.
+     */
+    private static JSObject rejection(Throwable failure) {
+        if (failure instanceof ProcessingException && ((ProcessingException) failure).errors() != null) {
+            return JsRuntimeError.of((ProcessingException) failure);
+        }
+        return JSExceptions.getJSException(failure);
     }
 
     @JSExport
-    public JSPromise<JSBoolean> simulateWithLimit(int limit) {
+    public JSPromise<JSNumber> step() {
+        return run(() -> this.main.step());
+    }
+
+    /** Runs until the program stops: an exit, running off the end, or a failure. */
+    @JSExport
+    public JSPromise<JSNumber> simulate() {
+        return run(() -> this.main.simulate(-1));
+    }
+
+    @JSExport
+    public JSPromise<JSNumber> simulateWithLimit(int limit) {
         return run(() -> this.main.simulate(limit));
+    }
+
+    /** Why the last run call stopped, as a StopReason ordinal; -1 (NONE) when none has run since initialize. */
+    @JSExport
+    public int getStopReason() {
+        Simulator.Reason reason = this.main.getStopReason();
+        return reason == null ? -1 : reason.ordinal();
+    }
+
+    /** The exit code: exit2's operand once it has run, 0 otherwise. */
+    @JSProperty
+    @JSExport
+    public int getExitCode() {
+        return this.main.getExitCode();
     }
 
     @JSExport
@@ -376,12 +434,12 @@ public class JsMips {
     }
 
     @JSExport
-    public JSPromise<JSBoolean> simulateWithBreakpoints(int[] breakpoints) {
+    public JSPromise<JSNumber> simulateWithBreakpoints(int[] breakpoints) {
         return run(() -> this.main.simulate(breakpoints));
     }
 
     @JSExport
-    public JSPromise<JSBoolean> simulateWithBreakpointsAndLimit(int[] breakpoints, int limit) {
+    public JSPromise<JSNumber> simulateWithBreakpointsAndLimit(int[] breakpoints, int limit) {
         return run(() -> this.main.simulate(breakpoints, limit));
     }
 
@@ -425,7 +483,7 @@ public class JsMips {
 
     /**
      * The raw back step stack, newest first: one element per recorded step. An instruction occupies
-     * one to three of them, a poke exactly one, whatever it wrote - the element with `isPoke` set,
+     * one or more of them, a poke exactly one, whatever it wrote - the element with `isPoke` set,
      * which is what tells a poke apart from a host write made before anything ran, since both carry
      * pc -1. Use getUndoGroups() to read the history the way undo() pops it.
      *
@@ -467,9 +525,9 @@ public class JsMips {
             if (stack[start].isPoke()) {
                 int group = stack[start].getPokeGroup();
                 livePokeGroups.add(group);
-                groups.add(JsUndoGroup.poke(POKE_PC, steps, writesOfPoke(group)));
+                groups.add(JsUndoGroup.poke(Long.toString(stack[start].getSerial()), POKE_PC, steps, writesOfPoke(group)));
             } else {
-                groups.add(JsUndoGroup.instruction(stack[start].getPc(), steps));
+                groups.add(JsUndoGroup.instruction(Long.toString(stack[start].getSerial()), stack[start].getPc(), steps));
             }
             start = end;
         }
@@ -510,13 +568,21 @@ public class JsMips {
             for (int i = start; i < end; i++) steps.set(i - start, JsBackStep.of(stack.fromTop(i)));
             BackStepper.BackStep first = stack.fromTop(start);
             groups.add(first.isPoke()
-                    ? JsUndoGroup.poke(POKE_PC, steps, writesOfPoke(first.getPokeGroup()))
-                    : JsUndoGroup.instruction(first.getPc(), steps));
+                    ? JsUndoGroup.poke(Long.toString(first.getSerial()), POKE_PC, steps, writesOfPoke(first.getPokeGroup()))
+                    : JsUndoGroup.instruction(Long.toString(first.getSerial()), first.getPc(), steps));
             start = end;
         }
         JSArray<JSObject> result = JSArray.create(groups.size());
         for (int i = 0; i < groups.size(); i++) result.set(i, groups.get(i));
         return result;
+    }
+
+    /** The dynamic instruction currently executing, or null outside an instruction. */
+    @JSExport
+    public String getCurrentInstructionSerial() {
+        if (!this.main.isAssembled()) return null;
+        long serial = this.main.getProgram().getBackStepper().getCurrentInstructionSerial();
+        return serial == 0 ? null : Long.toString(serial);
     }
 
     /** How many entries undo() can still pop: executed instructions and pokes, as getUndoGroups() counts them. */
@@ -875,22 +941,31 @@ public class JsMips {
 
     @JSExport
     public void setUndoSize(int size) {
+        if (size < 0) throw new IllegalArgumentException("Undo size must be nonnegative");
         Globals.maximumBacksteps = size;
     }
 
     @JSExport
     void setUndoEnabled(boolean enabled) {
+        if (executingInstructions > 0 || openPoke != null) {
+            throw new IllegalStateException("Cannot change recording during an instruction or poke");
+        }
         this.main.getProgram().getBackStepper().setEnabled(enabled);
     }
 
     @JSExport
     public void undo() {
+        if (executingInstructions > 0 || openPoke != null) {
+            throw new IllegalStateException("Cannot undo during an instruction or poke");
+        }
         this.main.getProgram().getBackStepper().backStep();
     }
 
+    /** The statement the program runs next, or null once it has ended: after an exit, or off the end. */
     @JSExport
     public JsProgramStatement getNextStatement() {
-        return new JsProgramStatement(this.main.getStatementAtAddress(this.getProgramCounter()));
+        ProgramStatement statement = this.main.getNextStatement();
+        return statement == null ? null : new JsProgramStatement(statement);
     }
 
     @JSExport

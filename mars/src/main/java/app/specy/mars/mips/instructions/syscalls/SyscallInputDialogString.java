@@ -64,20 +64,8 @@ public class SyscallInputDialogString extends AbstractSyscall {
       // -2: Cancel was chosen
       // -3: OK was chosen but no data had been input into field
 
-      String message = new String(); // = "";
-      int byteAddress = RegisterFile.getValue(4); // byteAddress of string is in $a0
-      char ch[] = { ' ' }; // Need an array to convert to String
-      try {
-         ch[0] = (char) Globals.memory.getByte(byteAddress);
-         while (ch[0] != 0) // only uses single location ch[0]
-         {
-            message = message.concat(new String(ch)); // parameter to String constructor is a char[] array
-            byteAddress++;
-            ch[0] = (char) Globals.memory.getByte(byteAddress);
-         }
-      } catch (AddressErrorException e) {
-         throw new ProcessingException(statement, e);
-      }
+      // The message is UTF-8, where MARS reads one byte per character.
+      String message = NullString.get(statement, 4);
 
       // Values returned by Java's InputDialog:
       // A null return value means that "Cancel" was chosen rather than OK.
@@ -85,7 +73,7 @@ public class SyscallInputDialogString extends AbstractSyscall {
       // means that OK was chosen but no string was input.
       String inputString = null;
       inputString = this.io.inputDialog(message);
-      byteAddress = RegisterFile.getValue(5); // byteAddress of string is in $a1
+      int byteAddress = RegisterFile.getValue(5); // byteAddress of string is in $a1
       int maxLength = RegisterFile.getValue(6); // input buffer size for input string is in $a2
 
       try {
@@ -97,24 +85,20 @@ public class SyscallInputDialogString extends AbstractSyscall {
             RegisterFile.updateRegister(5, -3); // set $a1 to -3 flag
          } else {
             // The buffer will contain characters, a '\n' character, and the null character
-            // Copy the input data to buffer as space permits
-            for (int index = 0; (index < inputString.length()) && (index < maxLength - 1); index++) {
-               Globals.memory.setByte(byteAddress + index,
-                     inputString.charAt(index));
+            // Copy the input data to buffer as space permits. The text is stored as UTF-8 and
+            // measured in bytes, as RARS does, where MARS stores one byte per character.
+            byte[] utf8Bytes = Utf8.encode(inputString);
+            int stringLength = Math.min(maxLength - 1, utf8Bytes.length);
+            for (int index = 0; index < stringLength; index++) {
+               Globals.memory.setByte(byteAddress + index, utf8Bytes[index]);
             }
-            if (inputString.length() < maxLength - 1) {
-               Globals.memory.setByte(byteAddress + (int) Math.min(inputString.length(), maxLength - 2), '\n'); // newline
-                                                                                                                // at
-                                                                                                                // string
-                                                                                                                // end
+            if (stringLength < maxLength - 1) {
+               Globals.memory.setByte(byteAddress + stringLength, '\n'); // newline at string end
+               stringLength++;
             }
-            Globals.memory.setByte(byteAddress + (int) Math.min((inputString.length() + 1), maxLength - 1), 0); // null
-                                                                                                                // char
-                                                                                                                // to
-                                                                                                                // end
-                                                                                                                // string
+            Globals.memory.setByte(byteAddress + stringLength, 0); // null char to end string
 
-            if (inputString.length() > maxLength - 1) {
+            if (utf8Bytes.length > maxLength - 1) {
                // length of the input string exceeded the specified maximum
                RegisterFile.updateRegister(5, -4); // set $a1 to -4 flag
             } else {

@@ -19,7 +19,9 @@ import app.specy.mars.mips.instructions.BasicInstruction;
 import app.specy.mars.mips.instructions.ExtendedInstruction;
 import app.specy.mars.mips.instructions.Instruction;
 import app.specy.mars.util.Binary;
+import app.specy.mars.util.JavaNumberText;
 import app.specy.mars.util.SystemIO;
+import app.specy.mars.util.Utf8;
 
 /*
  Copyright (c) 2003-2012,  Pete Sanderson and Kenneth Vollmar
@@ -1399,7 +1401,9 @@ public class Assembler {
       if (TokenTypes.isIntegerTokenType(token.getType())
             || TokenTypes.isFloatingTokenType(token.getType())) {
          try {
-            value = Double.parseDouble(token.getValue());
+            // As Java 21 reads it, correctly rounded; .float rounds that double to a float, as
+            // MARS does.
+            value = JavaNumberText.parseDouble(token.getValue());
          } catch (NumberFormatException nfe) {
             errors.add(new ErrorMessage(token.getSourceMIPSprogram(), token.getSourceLine(),
                   token.getStartPos(), "\"" + token.getValue()
@@ -1435,6 +1439,10 @@ public class Assembler {
    // Use directive argument to distinguish between ASCII and ASCIIZ. The
    // latter stores a terminating null byte. Can handle a list of one or more
    // strings on a single line.
+   //
+   // A string is stored as UTF-8, a character by code point, as RARS stores it: MARS 4.5
+   // stores the low byte of each character instead (Latin-1), which this fork changes so that
+   // a literal, print string (4) and write (15) agree on its text, a documented deviation.
    private void storeStrings(TokenList tokens, Directives direct, ErrorList errors) {
       Token token;
       // Correctly handles case where this is a "directive continuation" line.
@@ -1449,72 +1457,102 @@ public class Assembler {
                   token.getStartPos(), "\"" + token.getValue()
                         + "\" is not a valid character string"));
          } else {
-            String quote = token.getValue();
-            char theChar;
-            for (int j = 1; j < quote.length() - 1; j++) {
-               theChar = quote.charAt(j);
-               if (theChar == '\\') {
-                  theChar = quote.charAt(++j);
-                  switch (theChar) {
-                     case 'n':
-                        theChar = '\n';
-                        break;
-                     case 't':
-                        theChar = '\t';
-                        break;
-                     case 'r':
-                        theChar = '\r';
-                        break;
-                     case '\\':
-                        theChar = '\\';
-                        break;
-                     case '\'':
-                        theChar = '\'';
-                        break;
-                     case '"':
-                        theChar = '"';
-                        break;
-                     case 'b':
-                        theChar = '\b';
-                        break;
-                     case 'f':
-                        theChar = '\f';
-                        break;
-                     case '0':
-                        theChar = '\0';
-                        break;
-                     // Not implemented: \ n = octal character (n is number)
-                     // \ x n = hex character (n is number)
-                     // \ u n = unicode character (n is number)
-                     // There are of course no spaces in these escape
-                     // codes...
-                  }
-               }
-               try {
-                  Globals.memory.set(this.dataAddress.get(), (int) theChar,
-                        DataTypes.CHAR_SIZE);
-               } catch (AddressErrorException e) {
-                  errors.add(new ErrorMessage(token.getSourceMIPSprogram(), token
-                        .getSourceLine(), token.getStartPos(),
-                        "\""
-                              + this.dataAddress.get() + "\" is not a valid data segment address"));
-               }
-               this.dataAddress.increment(DataTypes.CHAR_SIZE);
+            for (byte value : Utf8.encode(unescapeString(token, errors))) {
+               storeStringByte(token, value & 0xff, errors);
             }
             if (direct == Directives.ASCIIZ) {
-               try {
-                  Globals.memory.set(this.dataAddress.get(), 0, DataTypes.CHAR_SIZE);
-               } catch (AddressErrorException e) {
-                  errors.add(new ErrorMessage(token.getSourceMIPSprogram(), token
-                        .getSourceLine(), token.getStartPos(),
-                        "\""
-                              + this.dataAddress.get() + "\" is not a valid data segment address"));
-               }
-               this.dataAddress.increment(DataTypes.CHAR_SIZE);
+               storeStringByte(token, 0, errors);
             }
          }
       }
    } // storeStrings()
+
+   // //////////////////////////////////////////////////////////////////////////////////
+   // The characters a quoted string stands for, with its escapes decoded: MARS's own, and
+   // RARS's unicode escape, a backslash, u and four hexadecimal digits naming one UTF-16 unit.
+   // Two such units that make a surrogate pair stand for one character, as in Java.
+   private String unescapeString(Token token, ErrorList errors) {
+      String quote = token.getValue();
+      int contentEnd = quote.length() - 1;
+      StringBuilder text = new StringBuilder(contentEnd);
+      char theChar;
+      for (int j = 1; j < contentEnd; j++) {
+         theChar = quote.charAt(j);
+         if (theChar == '\\') {
+            theChar = quote.charAt(++j);
+            switch (theChar) {
+               case 'n':
+                  theChar = '\n';
+                  break;
+               case 't':
+                  theChar = '\t';
+                  break;
+               case 'r':
+                  theChar = '\r';
+                  break;
+               case '\\':
+                  theChar = '\\';
+                  break;
+               case '\'':
+                  theChar = '\'';
+                  break;
+               case '"':
+                  theChar = '"';
+                  break;
+               case 'b':
+                  theChar = '\b';
+                  break;
+               case 'f':
+                  theChar = '\f';
+                  break;
+               case '0':
+                  theChar = '\0';
+                  break;
+               case 'u':
+                  if (j + 5 > contentEnd) {
+                     errors.add(new ErrorMessage(token.getSourceMIPSprogram(), token.getSourceLine(),
+                           token.getStartPos(), "unicode escape \"\\u" + quote.substring(j + 1, contentEnd)
+                                 + "\" is incomplete. Only escapes with 4 digits are valid."));
+                     j = contentEnd;
+                     break;
+                  }
+                  String codeUnit = quote.substring(j + 1, j + 5);
+                  try {
+                     // Integer.parseInt and Character.toChars, as RARS reads the escape; a sign
+                     // is part of what parseInt accepts, and a negative unit is no character.
+                     int value = JavaNumberText.parseInt(codeUnit, 16);
+                     if (value < 0) {
+                        throw new NumberFormatException(codeUnit);
+                     }
+                     theChar = (char) value;
+                  } catch (NumberFormatException e) {
+                     errors.add(new ErrorMessage(token.getSourceMIPSprogram(), token.getSourceLine(),
+                           token.getStartPos(), "illegal unicode escape: \"\\u" + codeUnit + "\""));
+                  }
+                  j += 4;
+                  break;
+               // Not implemented: \ n = octal character (n is number)
+               // \ x n = hex character (n is number)
+               // There are of course no spaces in these escape
+               // codes...
+            }
+         }
+         text.append(theChar);
+      }
+      return text.toString();
+   }
+
+   private void storeStringByte(Token token, int value, ErrorList errors) {
+      try {
+         Globals.memory.set(this.dataAddress.get(), value, DataTypes.CHAR_SIZE);
+      } catch (AddressErrorException e) {
+         errors.add(new ErrorMessage(token.getSourceMIPSprogram(), token
+               .getSourceLine(), token.getStartPos(),
+               "\""
+                     + this.dataAddress.get() + "\" is not a valid data segment address"));
+      }
+      this.dataAddress.increment(DataTypes.CHAR_SIZE);
+   }
 
    // //////////////////////////////////////////////////////////////////////////////////
    // Simply check to see if we are in data segment. Generate error if not.

@@ -63,6 +63,8 @@ public class MIPSprogram {
    private AssemblerProfile assemblerProfile = AssemblerProfile.MARS;
    private RuntimeLibrary runtimeLibrary;
    private String entrySymbol;
+   /** Where the assembled program's heap starts; see {@link #getHeapStart()}. */
+   private int heapStart = Memory.heapBaseAddress;
 
    /**
     * Produces list of source statements that comprise the program.
@@ -351,6 +353,7 @@ public class MIPSprogram {
       if (assemblerProfile == AssemblerProfile.GNU_COMPILER_V1) {
          GnuAssembler gnu = new GnuAssembler(List.of(this), runtimeLibrary, entrySymbol);
          this.machineList = gnu.assemble();
+         this.heapStart = gnu.heapStart();
          errors = gnu.getErrors();
          if (warningsAreErrors && errors.warningsOccurred()) {
             throw new ProcessingException(errors);
@@ -360,6 +363,8 @@ public class MIPSprogram {
          asm.setLinkInputs(runtimeLibrary, entrySymbol);
          this.machineList = asm.assemble(MIPSprogramsToAssemble, extendedAssemblerEnabled, warningsAreErrors);
          errors = asm.getErrorList();
+         // MARS's layout: the heap starts at its base, whatever the program's data.
+         this.heapStart = Memory.heapBaseAddress;
       }
       this.machineListPCMap = new HashMap<Integer, ProgramStatement>();
       for(ProgramStatement ps : machineList) {
@@ -367,6 +372,15 @@ public class MIPSprogram {
       }
       this.backStepper = new BackStepper();
       return errors;
+   }
+
+   /**
+    * Where the assembled program's heap, and so the first block sbrk hands out, starts: MARS's heap
+    * base (0x10040000), or in a GNU-profile program whose static data reaches past it, the first
+    * page after its static data.
+    */
+   public int getHeapStart() {
+      return heapStart;
    }
 
    public ProgramStatement getMachineStatement(int address) {
@@ -379,12 +393,12 @@ public class MIPSprogram {
     * Begins simulation at beginning of text segment and continues to completion.
     * 
     * @param breakPoints int array of breakpoints (PC addresses). Can be null.
-    * @return true if execution completed and false otherwise
+    * @return why the simulation stopped
     * @throws ProcessingException Will throw exception if errors occured while
     *                             simulating.
     **/
 
-   public boolean simulate(int[] breakPoints) throws ProcessingException {
+   public Simulator.Reason simulate(int[] breakPoints) throws ProcessingException {
       return this.simulateFromPC(breakPoints, -1);
    }
 
@@ -395,12 +409,12 @@ public class MIPSprogram {
     * until the specified maximum number of steps are simulated.
     * 
     * @param maxSteps maximum number of steps to simulate.
-    * @return true if execution completed and false otherwise
+    * @return why the simulation stopped
     * @throws ProcessingException Will throw exception if errors occured while
     *                             simulating.
     **/
 
-   public boolean simulate(int maxSteps) throws ProcessingException {
+   public Simulator.Reason simulate(int maxSteps) throws ProcessingException {
       return this.simulateFromPC(null, maxSteps);
    }
 
@@ -414,11 +428,11 @@ public class MIPSprogram {
     * @param breakPoints int array of breakpoints (PC addresses). Can be null.
     * @param maxSteps    maximum number of instruction executions. Default -1 means
     *                    no maximum.
-    * @return true if execution completed and false otherwise
+    * @return why the simulation stopped
     * @throws ProcessingException Will throw exception if errors occured while
     *                             simulating.
     **/
-   public boolean simulateFromPC(int[] breakPoints, int maxSteps) throws ProcessingException {
+   public Simulator.Reason simulateFromPC(int[] breakPoints, int maxSteps) throws ProcessingException {
       steppedExecution = false;
       Simulator sim = Simulator.getInstance();
       return sim.simulate(this, RegisterFile.getProgramCounter(), maxSteps, breakPoints);
@@ -429,15 +443,14 @@ public class MIPSprogram {
     * assembled.
     * Begins simulation at current program counter address and executes one step.
     * 
-    * @return true if execution completed and false otherwise
+    * @return why the simulation stopped
     * @throws ProcessingException Will throw exception if errors occured while
     *                             simulating.
     **/
-   public boolean simulateStepAtPC() throws ProcessingException {
+   public Simulator.Reason simulateStepAtPC() throws ProcessingException {
       steppedExecution = true;
       Simulator sim = Simulator.getInstance();
-      boolean done = sim.simulate(this, RegisterFile.getProgramCounter(), 1, null);
-      return done;
+      return sim.simulate(this, RegisterFile.getProgramCounter(), 1, null);
    }
 
    /**

@@ -74,21 +74,8 @@ public class SyscallOpen extends AbstractSyscall {
       // Returns in $v0: a "file descriptor" in the range 0 to
       // SystemIO.SYSCALL_MAXFILES-1,
       // or -1 if error
-      String filename = new String(); // = "";
-      int byteAddress = RegisterFile.getValue(4);
-      char ch[] = { ' ' }; // Need an array to convert to String
-      try {
-         ch[0] = (char) Globals.memory.getByte(byteAddress);
-         while (ch[0] != 0) // only uses single location ch[0]
-         {
-            filename = filename.concat(new String(ch)); // parameter to String constructor is a char[] array
-            byteAddress++;
-            ch[0] = (char) Globals.memory.getByte(
-                  byteAddress);
-         }
-      } catch (AddressErrorException e) {
-         throw new ProcessingException(statement, e);
-      }
+      // The path is UTF-8, where MARS reads one byte per character.
+      String filename = NullString.get(statement, 4);
       int retValue = SystemIO.openFile(filename,
             RegisterFile.getValue(5));
       RegisterFile.updateRegister(2, retValue); // set returned fd value in register

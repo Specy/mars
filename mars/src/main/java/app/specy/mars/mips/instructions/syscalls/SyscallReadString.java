@@ -51,6 +51,10 @@ public class SyscallReadString extends AbstractSyscall {
     * Follows semantics of UNIX 'fgets'. For specified length n,
     * string can be no longer than n-1. If less than that, add
     * newline to end. In either case, then pad with null byte.
+    * <p>
+    * The string is stored as UTF-8, as RARS stores it, where MARS stores one byte per character:
+    * at most n-1 characters are taken, and then at most n-1 of their bytes, so a character can
+    * be cut short where the buffer ends.
     */
    public void simulate(ProgramStatement statement) throws ProcessingException {
 
@@ -64,11 +68,11 @@ public class SyscallReadString extends AbstractSyscall {
          addNullByte = false;
       }
       inputString = SystemIO.readString(this.getNumber(), maxLength);
-      int stringLength = Math.min(maxLength, inputString.length());
+      byte[] utf8Bytes = Utf8.encode(inputString);
+      int stringLength = Math.min(maxLength, utf8Bytes.length);
       try {
          for (int index = 0; index < stringLength; index++) {
-            Globals.memory.setByte(buf + index,
-                  inputString.charAt(index));
+            Globals.memory.setByte(buf + index, utf8Bytes[index]);
          }
          if (stringLength < maxLength) {
             Globals.memory.setByte(buf + stringLength, '\n');

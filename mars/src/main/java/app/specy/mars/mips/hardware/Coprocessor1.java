@@ -106,7 +106,9 @@ public class Coprocessor1 {
 
    public static void setRegisterToFloat(int reg, float val) {
       if (reg >= 0 && reg < registers.length) {
-         registers[reg].setValue(Float.floatToRawIntBits(val));
+         // Through updateRegister, so that the write is in the history: the syscalls that set
+         // $f0 this way (random float, the float dialog) undo like every other instruction.
+         updateRegister(reg, Float.floatToRawIntBits(val));
       }
    }
 
@@ -132,7 +134,7 @@ public class Coprocessor1 {
 
    public static void setRegisterToInt(int reg, int val) {
       if (reg >= 0 && reg < registers.length) {
-         registers[reg].setValue(val);
+         updateRegister(reg, val);
       }
    }
 
@@ -155,8 +157,9 @@ public class Coprocessor1 {
          throw new InvalidRegisterAccessException();
       }
       long bits = Double.doubleToRawLongBits(val);
-      registers[reg + 1].setValue(Binary.highOrderLongToInt(bits)); // high order 32 bits
-      registers[reg].setValue(Binary.lowOrderLongToInt(bits)); // low order 32 bits
+      // Recorded in the history, as setRegisterToFloat is.
+      updateRegister(reg + 1, Binary.highOrderLongToInt(bits)); // high order 32 bits
+      updateRegister(reg, Binary.lowOrderLongToInt(bits)); // low order 32 bits
    }
 
    /**
@@ -197,8 +200,8 @@ public class Coprocessor1 {
       if (reg % 2 != 0) {
          throw new InvalidRegisterAccessException();
       }
-      registers[reg + 1].setValue(Binary.highOrderLongToInt(val)); // high order 32 bits
-      registers[reg].setValue(Binary.lowOrderLongToInt(val)); // low order 32 bits
+      updateRegister(reg + 1, Binary.highOrderLongToInt(val)); // high order 32 bits
+      updateRegister(reg, Binary.lowOrderLongToInt(val)); // low order 32 bits
    }
 
    /**

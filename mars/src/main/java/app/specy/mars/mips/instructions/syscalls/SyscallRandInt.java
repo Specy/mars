@@ -1,7 +1,5 @@
 package app.specy.mars.mips.instructions.syscalls;
 
-import java.util.Random;
-
 import app.specy.mars.*;
 import app.specy.mars.mips.hardware.*;
 import app.specy.mars.simulator.*;
@@ -57,13 +55,7 @@ public class SyscallRandInt extends AbstractSyscall {
       // Input arguments: $a0 = index of pseudorandom number generator
       // Return: $a0 = the next pseudorandom, uniformly distributed int value from
       // this random number generator's sequence.
-      Integer index = new Integer(RegisterFile.getValue(4));
-      Random stream = (Random) RandomStreams.randomStreams.get(index);
-      if (stream == null) {
-         stream = new Random(); // create a non-seeded stream
-         RandomStreams.randomStreams.put(index, stream);
-      }
-      RegisterFile.updateRegister(4, stream.nextInt());
+      RegisterFile.updateRegister(4, RandomStreams.forDraw(RegisterFile.getValue(4)).nextInt());
    }
 
 }

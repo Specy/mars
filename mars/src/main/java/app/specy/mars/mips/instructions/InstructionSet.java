@@ -2907,13 +2907,23 @@ public class InstructionSet {
             throws ProcessingException {
         Syscall service = syscallLoader.findSyscall(number);
         if (service != null) {
-            service.simulate(statement);
+            try {
+                service.simulate(statement);
+            } catch (ProcessingException failure) {
+                // A service refusing its arguments or its input; an exit has no errors and passes.
+                if (failure.errors() != null) {
+                    failure.setKind(ProcessingException.Kind.SYSCALL);
+                }
+                throw failure;
+            }
             return;
         }
-        throw new ProcessingException(statement,
+        ProcessingException unknown = new ProcessingException(statement,
                 "invalid or unimplemented syscall service: " +
                         number + " ",
                 Exceptions.SYSCALL_EXCEPTION);
+        unknown.setKind(ProcessingException.Kind.SYSCALL);
+        throw unknown;
     }
 
     /*

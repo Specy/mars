@@ -63,20 +63,8 @@ public class SyscallInputDialogFloat extends AbstractSyscall {
       // -2: Cancel was chosen
       // -3: OK was chosen but no data had been input into field
 
-      String message = new String(); // = "";
-      int byteAddress = RegisterFile.getValue(4);
-      char ch[] = { ' ' }; // Need an array to convert to String
-      try {
-         ch[0] = (char) Globals.memory.getByte(byteAddress);
-         while (ch[0] != 0) // only uses single location ch[0]
-         {
-            message = message.concat(new String(ch)); // parameter to String constructor is a char[] array
-            byteAddress++;
-            ch[0] = (char) Globals.memory.getByte(byteAddress);
-         }
-      } catch (AddressErrorException e) {
-         throw new ProcessingException(statement, e);
-      }
+      // The message is UTF-8, where MARS reads one byte per character.
+      String message = NullString.get(statement, 4);
 
       // Values returned by Java's InputDialog:
       // A null return value means that "Cancel" was chosen rather than OK.
@@ -95,7 +83,7 @@ public class SyscallInputDialogFloat extends AbstractSyscall {
             RegisterFile.updateRegister(5, -3); // set $a1 to -3 flag
          } else {
 
-            float floatValue = Float.parseFloat(inputValue);
+            float floatValue = JavaNumberText.parseFloat(inputValue);
 
             // System.out.println("SyscallInputDialogFloat: floatValue is " + floatValue);
 

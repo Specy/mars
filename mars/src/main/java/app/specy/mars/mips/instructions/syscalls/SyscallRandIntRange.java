@@ -1,7 +1,5 @@
 package app.specy.mars.mips.instructions.syscalls;
 
-import java.util.Random;
-
 import app.specy.mars.*;
 import app.specy.mars.mips.hardware.*;
 import app.specy.mars.simulator.*;
@@ -62,19 +60,15 @@ public class SyscallRandIntRange extends AbstractSyscall {
       // Return: $a0 = the next pseudorandom, uniformly distributed int value from
       // this
       // random number generator's sequence.
-      Integer index = new Integer(RegisterFile.getValue(4));
-      Random stream = (Random) RandomStreams.randomStreams.get(index);
-      if (stream == null) {
-         stream = new Random(); // create a non-seeded stream
-         RandomStreams.randomStreams.put(index, stream);
-      }
-      try {
-         RegisterFile.updateRegister(4, stream.nextInt(RegisterFile.getValue(5)));
-      } catch (IllegalArgumentException iae) {
+      int bound = RegisterFile.getValue(5);
+      // Random.nextInt(bound) refuses a bound of 0 or less before it draws, which MARS reports
+      // as below; the generator is left as it was.
+      if (bound <= 0) {
          throw new ProcessingException(statement,
                "Upper bound of range cannot be negative (syscall " + this.getNumber() + ")",
                Exceptions.SYSCALL_EXCEPTION);
       }
+      RegisterFile.updateRegister(4, RandomStreams.forDraw(RegisterFile.getValue(4)).nextInt(bound));
    }
 
 }

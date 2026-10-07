@@ -49,7 +49,7 @@ public class SyscallPrintFloat extends AbstractSyscall {
     * Performs syscall function to display float whose bits are stored in $f12
     */
    public void simulate(ProgramStatement statement) throws ProcessingException {
-      SystemIO.printFloat(Float.intBitsToFloat(
-            Coprocessor1.getValue(12)));
+      SystemIO.printString(JavaNumberText.toString(Float.intBitsToFloat(
+            Coprocessor1.getValue(12))));
    }
 }

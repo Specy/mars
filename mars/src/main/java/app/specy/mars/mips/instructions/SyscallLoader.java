@@ -89,6 +89,7 @@ public class SyscallLoader {
       add(new SyscallRandFloat());
       add(new SyscallRandInt());
       add(new SyscallRandIntRange());
+      add(new SyscallRandSeed());
       add(new SyscallRead());
       add(new SyscallWrite());
       add(new SyscallReadChar());

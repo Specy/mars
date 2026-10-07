@@ -4,6 +4,8 @@ import app.specy.mars.*;
 import app.specy.mars.mips.hardware.*;
 import app.specy.mars.util.*;
 
+import java.io.ByteArrayOutputStream;
+
 /*
 Copyright (c) 2003-2006,  Pete Sanderson and Kenneth Vollmar
 
@@ -46,27 +48,26 @@ public class SyscallPrintString extends AbstractSyscall {
     }
 
     /**
-     * Performs syscall function to print string stored starting at address in $a0.
+     * Performs syscall function to print string stored starting at address in $a0, up to its NUL
+     * byte whatever its length, as MARS does, decoded from UTF-8 (MARS reads one byte per
+     * character). The string is printed in one piece; when a byte of it cannot be read, the text
+     * read before it is printed first, as MARS prints one character at a time.
      */
     public void simulate(ProgramStatement statement) throws ProcessingException {
-        int byteAddress = RegisterFile.getValue(4);
-        int maxChars = 65536; // arbitrary upper limit
-        char ch = 0;
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try {
-            ch = (char) Globals.memory.getByte(byteAddress);
-            // won't stop until NULL byte reached or maximum characters printed
-            while (ch != 0) {
-                maxChars--;
-                if (maxChars < 0) {
-                    throw new ProcessingException(statement,
-                            "String length exceeds system limit of 65536 characters");
-                }
-                SystemIO.printChar(ch);
-                byteAddress++;
-                ch = (char) Globals.memory.getByte(byteAddress);
-            }
+            // won't stop until NULL byte reached!
+            NullString.read(RegisterFile.getValue(4), bytes);
         } catch (AddressErrorException e) {
+            print(bytes);
             throw new ProcessingException(statement, e);
+        }
+        print(bytes);
+    }
+
+    private static void print(ByteArrayOutputStream bytes) {
+        if (bytes.size() > 0) {
+            SystemIO.printString(NullString.decode(bytes));
         }
     }
 }

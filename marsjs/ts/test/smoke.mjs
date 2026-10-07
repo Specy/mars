@@ -12,7 +12,7 @@ if (!existsSync(fileURLToPath(dist))) {
 }
 
 const packageExports = await import(dist)
-const { BackStepAction, MIPS, MIPS_COPROCESSOR0_REGISTER_NUMBERS, makeMipsFromFiles, registerHandlers, unimplementedHandler } = packageExports
+const { BackStepAction, MIPS, MIPS_COPROCESSOR0_REGISTER_NUMBERS, StopReason, makeMipsFromFiles, registerHandlers, unimplementedHandler } = packageExports
 
 const makeSingleFileMips = source => makeMipsFromFiles({ 'main.asm': source }, 'main.asm')
 
@@ -21,7 +21,7 @@ assert.equal('makeMipsFromSource' in MIPS, false, 'the v2 single-source static f
 
 const SOURCE = `
     .data
-msg:    .asciiz "sum = "
+msg:    .asciiz "sum (Σ 1…10) = "    # UTF-8: Σ is two bytes, … three
 
     .text
     .globl main
@@ -64,10 +64,8 @@ main:
 // so an unexpected syscall fails the test instead of silently doing nothing.
 const HANDLER_NAMES = [
     'openFile', 'closeFile', 'writeFile', 'readFile', 'confirm', 'inputDialog',
-    'outputDialog', 'askDouble', 'askFloat', 'askInt', 'askString', 'readDouble',
-    'readFloat', 'readInt', 'readString', 'readChar', 'logLine', 'log', 'printChar',
-    'printDouble', 'printFloat', 'printInt', 'printString', 'sleep', 'time', 'stdIn', 'stdOut',
-    'stdErr',
+    'outputDialog', 'readDouble', 'readFloat', 'readInt', 'readString', 'readChar',
+    'printString', 'sleep', 'time', 'stdIn', 'seekFile', 'stdOut', 'stdErr', 'randomSeed',
 ]
 
 const warningProgram = makeSingleFileMips(WARNINGS_ONLY_SOURCE)
@@ -92,15 +90,14 @@ assert.ok(realError.errors.some(error => error.isWarning === false), 'invalid as
 assert.ok(realErrorProgram.getTokenizedLines().length > 0, 'tokens should remain available after completed tokenization')
 assert.throws(() => realErrorProgram.getCompiledStatements(), /not been assembled successfully/)
 assert.throws(() => realErrorProgram.initialize(true), /not been assembled successfully/)
+assert.throws(() => realErrorProgram.getHeapStart(), /not been assembled successfully/)
 
 const output = []
 const mips = makeSingleFileMips(SOURCE)
 
 registerHandlers(mips, {
     ...Object.fromEntries(HANDLER_NAMES.map(name => [name, unimplementedHandler(name)])),
-    printInt: value => output.push(String(value)),
     printString: value => output.push(value),
-    printChar: value => output.push(value),
 })
 
 const assembled = mips.assemble()
@@ -118,7 +115,11 @@ while (!mips.terminated && steps < 10_000) {
 }
 
 assert.ok(mips.terminated, `program did not terminate within ${steps} steps`)
-assert.equal(output.join(''), 'sum = 55')
+// `terminated` is read from the program's state, so the loop ends on the exit itself.
+assert.equal(mips.getStopReason(), StopReason.NORMAL_TERMINATION, 'the loop ends on the exit')
+assert.equal(mips.exitCode, 0, 'exit gives code 0')
+assert.equal(output.join(''), 'sum (Σ 1…10) = 55', 'the literal is stored and printed as UTF-8')
+assert.equal(mips.getHeapStart(), 0x10040000, 'the heap starts at the heap base')
 assert.equal(mips.getRegisterValue('$t0'), 55)
 assert.equal(mips.getRegisterValue('$t1'), 11)
 assert.ok(mips.getUndoStack().length > 0, 'undo stack should record executed steps')
@@ -752,8 +753,8 @@ assert.deepEqual(pokeGroup.writes, [
 ], 'the entry reports every value it changed, old and new')
 // The entries, their back steps and their writes are ordinary objects with own properties, not
 // accessors on a class, so a host can clone or serialize a history without mapping it first.
-assert.deepEqual(Object.keys(pokeGroup), ['kind', 'pc', 'steps', 'writes'])
-assert.deepEqual(Object.keys(pokeGroup.steps[0]), ['action', 'pc', 'param1', 'param2', 'newValue', 'isPoke'])
+assert.deepEqual(Object.keys(pokeGroup), ['kind', 'serial', 'pc', 'steps', 'writes'])
+assert.deepEqual(Object.keys(pokeGroup.steps[0]), ['action', 'pc', 'param1', 'param2', 'newValue', 'isPoke', 'serial'])
 assert.equal(pokeGroup.steps[0].newValue, 0,
     'a poke entry carries no newValue of its own: its writes already report both sides of each value')
 assert.deepEqual(structuredClone(pokeGroup.writes)[4],
@@ -840,14 +841,13 @@ assert.equal(poking.getRegisterValue('$zero'), 0, 'and changes nothing')
 
 // With recording off the writes still stand; they simply cannot be undone, exactly as an
 // instruction executed with recording off cannot.
-const groupsBeforeDisabled = poking.getUndoGroups().length
 poking.setUndoEnabled(false)
 poking.beginPoke()
 poking.setRegisterValue('$t0', 0x999)
 assert.equal(poking.endPoke(), false, 'with undo disabled a poke records no entry')
 poking.setUndoEnabled(true)
 assert.equal(poking.getRegisterValue('$t0'), 0x999, 'but the write stands')
-assert.equal(poking.getUndoGroups().length, groupsBeforeDisabled, 'and the history is untouched')
+assert.equal(poking.getUndoGroups().length, 0, 'an unrecorded poke ends the retained history')
 
 // A poke is refused while an instruction is executing: step() resolves on a microtask, and the
 // simulator's state is half written until it does.
@@ -1081,7 +1081,7 @@ for (const step of written.getUndoStack()) {
 
 // 3. The field is additive and present on every entry of both read APIs.
 assert.deepEqual(Object.keys(written.getUndoStack()[0]),
-    ['action', 'pc', 'param1', 'param2', 'newValue', 'isPoke'],
+    ['action', 'pc', 'param1', 'param2', 'newValue', 'isPoke', 'serial'],
     'the existing fields keep their names and order, with newValue beside the value it replaced')
 const allGroups = written.getUndoGroups()
 assert.ok(allGroups.length > 10)
@@ -1129,7 +1129,8 @@ console.log(`ok - written values: ${written.getUndoStack().length} back steps, e
 // every instruction gets was skipped on the exit path, so the newest entry after an exit was the
 // instruction before the exit. A host that reads the last executed instruction off the history then
 // named that one, and one undo after an exit rolled back two instructions. The program goes on past
-// the exit, as one with functions below `main` does.
+// the exit, as one with functions below `main` does, and the exit's entry is the one that records
+// the exit itself, so that undoing it leaves the program running again.
 {
     const makeExiting = () => {
         const program = makeSingleFileMips(`
@@ -1155,25 +1156,30 @@ helper:
         const [top, below] = Array.from(program.getUndoGroups())
         assert.equal(top.kind, 'instruction', `${label}: the newest entry is an instruction`)
         assert.equal(top.pc, syscall.address, `${label}: and it is the exit syscall`)
-        assert.deepEqual(top.steps.map(step => step.action), [BackStepAction.DO_NOTHING],
-            `${label}: which wrote nothing`)
+        assert.deepEqual(top.steps.map(step => step.action), [BackStepAction.EXIT_RESTORE],
+            `${label}: which recorded only the exit`)
+        assert.deepEqual([top.steps[0].param2, top.steps[0].newValue], [0, 0], `${label}: exit leaves the code at 0`)
         assert.equal(below.pc, setV0.address, `${label}: the entry below it is the instruction before the exit`)
         return syscall
     }
 
     const ran = makeExiting()
-    assert.equal(await ran.simulateWithLimit(1_000), true, 'the run ends at the exit')
+    assert.equal(await ran.simulateWithLimit(1_000), StopReason.NORMAL_TERMINATION, 'the run ends at the exit')
     const syscall = exitsOnTheSyscall(ran, 'run')
+    assert.equal(ran.terminated, true, 'the exit ends the program')
+    assert.equal(ran.getNextStatement(), null, 'and what follows the syscall is not next')
     ran.undo()
+    assert.equal(ran.terminated, false, 'undoing the exit leaves the program running')
     assert.equal(ran.programCounter, syscall.address, 'one undo puts the program back on the exit syscall')
+    assert.equal(ran.getNextStatement().address, syscall.address)
     assert.equal(ran.getRegisterValue('$v0'), 10, 'and leaves the instruction before it done')
-    assert.equal(await ran.step(), true, 'stepping the syscall exits again')
+    assert.equal(await ran.step(), StopReason.NORMAL_TERMINATION, 'stepping the syscall exits again')
     exitsOnTheSyscall(ran, 'run, undone and stepped')
 
     const stepped = makeExiting()
-    let done
-    for (let i = 0; i < 3; i++) done = await stepped.step()
-    assert.equal(done, true, 'the third step is the exit')
+    let reason
+    for (let i = 0; i < 3; i++) reason = await stepped.step()
+    assert.equal(reason, StopReason.NORMAL_TERMINATION, 'the third step is the exit')
     exitsOnTheSyscall(stepped, 'step')
 }
 

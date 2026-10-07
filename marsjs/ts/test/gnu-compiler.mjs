@@ -339,6 +339,56 @@ for (const [value, count] of [['-2147483648', 1], ['2147483647', 2], ['0xfffffff
     assert.equal((await run(core))[4], Number(BigInt.asIntN(32, BigInt(value))), value)
 }
 
+// The heap follows static data: once a GNU-profile program's .data, .rodata, .bss and common
+// symbols reach past MARS's heap base (0x10040000), sbrk's first block is the first 4 KiB page after
+// them, as ld and a kernel place the break. Here a 512 KiB .bss array and a common block, in GCC's
+// shapes, end at 0x10091008, so the heap starts at 0x10092000.
+{
+    const HEAP_BASE = 0x10040000
+    const program = [
+        '.text', '.globl main', 'main:',
+        'li $4,16', 'li $2,9', 'syscall', 'move $16,$2',
+        'li $4,8', 'li $2,9', 'syscall', 'move $17,$2',
+        'la $8,big', 'li $9,524284', 'addu $8,$8,$9', 'li $10,7', 'sw $10,0($8)',
+        'la $9,more', 'li $10,4088', 'addu $9,$9,$10', 'li $10,11', 'sw $10,0($9)',
+        'li $10,9', 'sw $10,0($16)', 'sw $10,12($16)',
+        'lw $11,0($8)', 'lw $12,0($9)', 'lw $13,0($16)', 'addu $2,$11,$12', 'addu $2,$2,$13',
+        'move $4,$2', 'li $2,17', 'syscall',
+        '.data', '.align 2', 'first: .word 1',
+        '.bss', '.align 2', '.type big, @object', '.size big, 524288', 'big: .zero 524288',
+        '.local more', '.comm more,4096,8',
+    ].join('\n')
+    const core = assemble(program)
+    assert.equal(core.getAddressOfLabel('big'), DATA + 4)
+    assert.equal(core.getAddressOfLabel('more'), DATA + 8 + 524288)
+    assert.equal(core.getHeapStart(), 0x10092000, 'the first page after static data')
+    for (let runs = 0; runs < 2; runs++) {
+        const registers = await run(core)
+        assert.equal(registers[16], 0x10092000, 'sbrk hands out the heap start first')
+        assert.equal(registers[17], 0x10092010, 'and the next block after it')
+        assert.equal(core.exitCode, 27, 'the array, the common block and the heap hold their own values')
+    }
+    // The largest static data the data segment holds, which leaves the heap empty.
+    assert.equal(assemble('.bss\nbig: .zero 4128768\n').getHeapStart(), 0x10400000)
+    reject('.bss\nbig: .zero 4128769\n',
+        /^Static data ends at 0x10400001, past the end of the data segment at 0x10400000: \.data, \.rodata, \.bss and common symbols together fit in 4128768 bytes from 0x10010000$/m)
+    reject('.data\n.word 1\n.bss\n.comm huge,4194304,4\n', /Static data ends at 0x10410004, past the end of the data segment/)
+    // Static data below the heap base leaves the heap where MARS has it.
+    assert.equal(assemble('.bss\nbig: .zero 196608\n').getHeapStart(), HEAP_BASE)
+    assert.equal(assemble('.bss\nbig: .zero 196609\n').getHeapStart(), 0x10041000)
+
+    // A MARS-dialect program keeps MARS's layout whatever its size: the heap starts at its base,
+    // inside the program's data.
+    const legacy = assemble('.data\nbig: .space 524288\n.text\nmain: li $a0,16\nli $v0,9\nsyscall\nmove $s0,$v0\nli $v0,10\nsyscall\n', {}, {})
+    assert.equal(legacy.getHeapStart(), HEAP_BASE)
+    assert.equal((await run(legacy))[16], HEAP_BASE)
+    // And library members linked after it still stop before MARS's heap base.
+    const member = { members: { 'lib/table.s': '.data\n.globl table\ntable: .word 1\n' }, index: { table: 'lib/table.s' } }
+    const crossing = coreFor('.data\nbig: .space 196608\n.text\nmain: la $t0,table\nli $v0,10\nsyscall\n', {}, { libraries: [member] }).assemble()
+    assert.equal(crossing.hasErrors, true)
+    assert.match(crossing.errors.map(e => e.message).join('\n'), /Static data reaches the heap at 0x10040000/)
+}
+
 // Real GCC 14.2 output (cmipsg1420/mipsg1420, -EL) with the debug sections Compiler Explorer
 // returns, started by a small _start that runs .init_array, calls main and exits with syscall 17.
 // GCC's helpers such as __divdi3 are not part of it and remain unresolved.

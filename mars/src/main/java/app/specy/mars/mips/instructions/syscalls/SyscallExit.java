@@ -1,6 +1,7 @@
 package app.specy.mars.mips.instructions.syscalls;
 
 import app.specy.mars.*;
+import app.specy.mars.simulator.ProgramExit;
 import app.specy.mars.util.*;
 
 /*
@@ -49,6 +50,7 @@ public class SyscallExit extends AbstractSyscall {
     * Performs syscall function to exit the MIPS program.
     */
    public void simulate(ProgramStatement statement) throws ProcessingException {
+      ProgramExit.exit(0);
       throw new ProcessingException(); // empty exception list.
    }
 }

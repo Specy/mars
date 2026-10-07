@@ -63,20 +63,8 @@ public class SyscallMessageDialog extends AbstractSyscall {
       // other: plain message
       // Output: none
 
-      String message = new String(); // = "";
-      int byteAddress = RegisterFile.getValue(4);
-      char ch[] = { ' ' }; // Need an array to convert to String
-      try {
-         ch[0] = (char) Globals.memory.getByte(byteAddress);
-         while (ch[0] != 0) // only uses single location ch[0]
-         {
-            message = message.concat(new String(ch)); // parameter to String constructor is a char[] array
-            byteAddress++;
-            ch[0] = (char) Globals.memory.getByte(byteAddress);
-         }
-      } catch (AddressErrorException e) {
-         throw new ProcessingException(statement, e);
-      }
+      // The message is UTF-8, where MARS reads one byte per character.
+      String message = NullString.get(statement, 4);
 
       // Display the dialog.
       int msgType = RegisterFile.getValue(5);

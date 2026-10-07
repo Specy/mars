@@ -17,7 +17,9 @@ import app.specy.mars.mips.hardware.*;
 import app.specy.mars.mips.instructions.Instruction;
 import app.specy.mars.mips.instructions.InstructionSet;
 import app.specy.mars.mips.instructions.SyscallLoader;
+import app.specy.mars.mips.instructions.syscalls.RandomStreams;
 import app.specy.mars.mips.io.MIPSIO;
+import app.specy.mars.simulator.ProgramExit;
 import app.specy.mars.simulator.Simulator;
 import app.specy.mars.util.SystemIO;
 
@@ -29,7 +31,8 @@ public class MIPS {
     private boolean assemblyAttempted;
     private boolean assembled;
     private static MIPSIO io;
-    private boolean terminated = false;
+    /** Why the last run call stopped, or null when none has run since the program was initialized. */
+    private Simulator.Reason stopReason = null;
 
 
     public static void setIo(MIPSIO io) {
@@ -139,7 +142,7 @@ public class MIPS {
     public ErrorList assemble() throws ProcessingException {
         assemblyAttempted = true;
         assembled = false;
-        terminated = false;
+        stopReason = null;
         Globals.program = null;
         Globals.symbolTable.clear();
         Globals.memory.clear();
@@ -147,6 +150,7 @@ public class MIPS {
         main.prepareForAssembly(entryFile, files, assemblerProfile);
         main.setLinkInputs(runtimeLibrary, entrySymbol);
         ErrorList result = main.assemble(List.of(main), true);
+        Globals.memory.resetHeap(main.getHeapStart());
         Globals.program = main;
         assembled = true;
         return result;
@@ -154,13 +158,20 @@ public class MIPS {
 
     public void initialize(boolean startAtMain) {
         requireAssembled();
+        main.getBackStepper().clearHistory();
         RegisterFile.resetRegisters();
         Coprocessor0.resetRegisters();
         Coprocessor1.resetRegisters();
         if (entrySymbol != null) RegisterFile.initializeProgramCounter(entrySymbol);
         else RegisterFile.initializeProgramCounter(startAtMain);
         Stack.clearCallStack();
-        terminated = false;
+        // A new run starts with an empty heap, where this program's heap starts.
+        Globals.memory.resetHeap(main.getHeapStart());
+        // The state of the run: a new one has not exited, and its random generators start afresh.
+        // Assembling leaves them alone, because a host assembles throwaway programs while one runs.
+        ProgramExit.reset();
+        RandomStreams.reset();
+        stopReason = null;
     }
 
     public StackFrame[] getCallStack(){
@@ -178,26 +189,64 @@ public class MIPS {
         return (symbol == null) ? null : symbol.getName();
     }
 
-    public boolean simulate(int[] breakpoints) throws ProcessingException {
-        requireAssembled();
-        terminated = this.main.simulate(breakpoints);
-        return terminated;
-    }
-    public boolean simulate(int limit) throws ProcessingException {
-        requireAssembled();
-        terminated = this.main.simulate(limit);
-        return terminated;
-    }
-    public boolean simulate(int[] breakpoints, int limit) throws ProcessingException {
-        requireAssembled();
-        terminated = this.main.simulateFromPC(breakpoints, limit);
-        return terminated;
+    public Simulator.Reason simulate(int[] breakpoints) throws ProcessingException {
+        return run(() -> this.main.simulate(breakpoints));
     }
 
-    public boolean step() throws ProcessingException {
+    /** Runs at most {@code limit} instructions, or until the program stops when it is 0 or less. */
+    public Simulator.Reason simulate(int limit) throws ProcessingException {
+        return run(() -> this.main.simulate(limit));
+    }
+
+    public Simulator.Reason simulate(int[] breakpoints, int limit) throws ProcessingException {
+        return run(() -> this.main.simulateFromPC(breakpoints, limit));
+    }
+
+    public Simulator.Reason step() throws ProcessingException {
+        return run(() -> this.main.simulateStepAtPC());
+    }
+
+    private interface Run {
+        Simulator.Reason run() throws ProcessingException;
+    }
+
+    private Simulator.Reason run(Run body) throws ProcessingException {
         requireAssembled();
-        terminated = this.main.simulateStepAtPC();
-        return terminated;
+        if (ProgramExit.hasExited()) {
+            // An exit ends the program: what follows the syscall is not run, as MARS does not
+            // resume a program that has finished. Undo or initialize starts it again.
+            stopReason = Simulator.Reason.NORMAL_TERMINATION;
+            return stopReason;
+        }
+        try {
+            stopReason = body.run();
+        } catch (ProcessingException failure) {
+            stopReason = Simulator.Reason.EXCEPTION;
+            throw failure;
+        }
+        return stopReason;
+    }
+
+    /**
+     * Where the program's heap, and so the first block sbrk hands out, starts: MARS's heap base, or
+     * the first page after static data in a GNU-profile program whose static data reaches past it.
+     */
+    public int getHeapStart() {
+        requireAssembled();
+        return main.getHeapStart();
+    }
+
+    /** Why the last run call stopped, or null when none has run since the program was initialized. */
+    public Simulator.Reason getStopReason() {
+        return stopReason;
+    }
+
+    /**
+     * The program's exit code: exit2's operand once it has run, 0 otherwise - after exit, after
+     * running off the end, while the program runs. Initialize resets it; undo puts it back.
+     */
+    public int getExitCode() {
+        return ProgramExit.code();
     }
 
     public MIPSprogram getProgram() {
@@ -221,8 +270,24 @@ public class MIPS {
         return Globals.getInstructionSet();
     }
 
+    /**
+     * Whether the program has ended, read from its state rather than from the last run call, so
+     * that it is right after undo too: an exit service has run, or there is no statement at the
+     * program counter because execution ran off the end of the program.
+     */
     public boolean hasTerminated(){
-        return terminated;
+        if (!assembled) return false;
+        return ProgramExit.hasExited() || Simulator.noStatementAt(RegisterFile.getProgramCounter());
+    }
+
+    /**
+     * The statement the program runs next, or null when it has ended: after an exit, the statement
+     * that follows the syscall is not one the program will run.
+     */
+    public ProgramStatement getNextStatement() {
+        requireAssembled();
+        if (hasTerminated()) return null;
+        return this.main.getMachineStatement(RegisterFile.getProgramCounter());
     }
 
     public Simulator getSimulator() {

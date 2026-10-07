@@ -34,7 +34,7 @@ main:
   move $s1, $v0
   li $v0, 10
   syscall
-`, { stdIn: async (_buffer, length) => { assert.equal(length, 8); return answers.shift() } })
+`, { stdIn: async (...args) => { assert.deepEqual(args, [8]); return answers.shift() } })
 let registers = mips.getRegistersValues()
 assert.equal(registers[16], 3)
 assert.equal(registers[17], 0)

@@ -70,7 +70,8 @@ public class SystemIO {
    }
 
    /**
-    * Implements syscall to read an integer value.
+    * Implements syscall to read an integer value: the line typed, trimmed and parsed as
+    * {@code Integer.parseInt} does.
     * Client is responsible for catching NumberFormatException.
     * 
     * @param serviceNumber the number assigned to Read Int syscall (default 5)
@@ -78,11 +79,12 @@ public class SystemIO {
     */
 
    public static int readInteger(int serviceNumber) {
-      return io.readInt();
+      return JavaNumberText.parseInt(io.readInt().trim());
    }
 
    /**
-    * Implements syscall to read a float value.
+    * Implements syscall to read a float value: the line typed, trimmed and parsed as
+    * {@code Float.parseFloat} does.
     * Client is responsible for catching NumberFormatException.
     * 
     * @param serviceNumber the number assigned to Read Float syscall (default 6)
@@ -90,12 +92,12 @@ public class SystemIO {
     *         Feb 14 2005 Ken Vollmar
     */
    public static float readFloat(int serviceNumber) {
-      return io.readFloat();
-
+      return JavaNumberText.parseFloat(io.readFloat().trim());
    }
 
    /**
-    * Implements syscall to read a double value.
+    * Implements syscall to read a double value: the line typed, trimmed and parsed as
+    * {@code Double.parseDouble} does.
     * Client is responsible for catching NumberFormatException.
     * 
     * @param serviceNumber the number assigned to Read Double syscall (default 7)
@@ -103,31 +105,16 @@ public class SystemIO {
     *         1 Aug 2005 DPS, based on Ken Vollmar's readFloat
     */
    public static double readDouble(int serviceNumber) {
-      return io.readDouble();
+      return JavaNumberText.parseDouble(io.readDouble().trim());
    }
 
    /**
-    * Implements syscall having 4 in $v0, to print a string.
+    * Implements syscall having 4 in $v0, to print a string. Every print syscall formats its value
+    * as MARS does and prints the text through here.
     */
    public static void printString(String string) {
       io.printString(string);
    }
-
-   public static void printInt(int value) {
-      io.printInt(value);
-   }
-
-    public static void printFloat(float value) {
-        io.printFloat(value);
-    }
-
-    public static void printDouble(double value) {
-        io.printDouble(value);
-    }
-
-    public static void printChar(char value) {
-        io.printChar(value);
-    }
 
     /**
      * Implements syscall to suspend the program for a while (default 32).
@@ -142,6 +129,15 @@ public class SystemIO {
      */
     public static double time() {
         return io.time();
+    }
+
+    /**
+     * The seed random generator {@code index} starts from on its first use, for the random
+     * services (default 41 to 44). It comes from the IO environment, so that a scripted run can
+     * hand out a fixed seed and get the same numbers every time.
+     */
+    public static double randomSeed(int index) {
+        return io == null ? MIPSIO.hostRandomSeed() : io.randomSeed(index);
     }
 
 
@@ -164,27 +160,19 @@ public class SystemIO {
    }
 
    /**
-    * Implements syscall having 12 in $v0, to read a char value.
+    * Implements syscall having 12 in $v0, to read a char value: the first character typed, so
+    * Enter alone gives 10.
     *
     * @param serviceNumber the number assigned to Read Char syscall (default 12)
     * @return int value with lowest byte corresponding to user input
+    * @throws IndexOutOfBoundsException when nothing was typed, which the client reports
     */
    public static int readChar(int serviceNumber) {
-      char c = io.readChar();
-      String input = String.valueOf(c);
-      int returnValue = 0;
-      // The whole try-catch is not really necessary in this case since I'm
-      // just propagating the runtime exception (the default behavior), but
-      // I want to make it explicit. The client needs to catch it.
-      try {
-         returnValue = (int) (input.charAt(0)); // first character input
-      } catch (IndexOutOfBoundsException e) // no chars present
-      {
-         throw e; // was: returnValue = 0;
+      String input = io.readChar();
+      if (input.isEmpty()) {
+         throw new IndexOutOfBoundsException("No character was typed");
       }
-
-      return returnValue;
-
+      return input.charAt(0);
    }
 
    /**
@@ -238,7 +226,13 @@ public class SystemIO {
          } else if (fd == STDIN) {
             throw new MIPSIOError("Cannot write to STDIN");
          } else {
-            io.writeFile(fd, slice);
+            int written = io.writeFile(fd, slice);
+            if (written < 0) {
+               fileErrorString = new String(
+                     "IO Exception on write of file with fd " + fd);
+               return -1;
+            }
+            return Math.min(written, lengthRequested);
          }
       } catch (MIPSIOError e) {
          fileErrorString = new String(
@@ -286,11 +280,13 @@ public class SystemIO {
             throw new MIPSIOError("Cannot read from STDOUT or STDERR");
          }
 
+         // The host reports the end of the file as 0 bytes read and a failure as -1, the
+         // values this syscall returns.
          retValue = io.readFile(fd, myBuffer, lengthRequested);
-         // This method will return -1 upon EOF, but our spec says that negative
-         // value represents an error, so we return 0 for EOF. DPS 10-July-2008.
-         if (retValue == -1) {
-            retValue = 0;
+         if (retValue < 0) {
+            fileErrorString = new String(
+                  "IO Exception on read of file with fd " + fd);
+            return -1;
          }
       } catch (MIPSIOError e) {
          fileErrorString = new String(

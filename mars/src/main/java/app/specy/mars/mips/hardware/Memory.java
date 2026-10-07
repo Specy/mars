@@ -365,6 +365,16 @@ public class Memory extends Observable {
    }
 
    /**
+    * Empties the heap, so that the next allocation starts at {@code start}: the heap base, or the
+    * first page after static data for a program whose static data reaches past the heap base.
+    *
+    * @param start the address the heap starts at, word-aligned
+    */
+   public void resetHeap(int start) {
+      heapAddress = start;
+   }
+
+   /**
     * Returns the next available word-aligned heap address. There is no recycling
     * and
     * no heap management! There is however nearly 4MB of heap space available in

@@ -259,7 +259,7 @@ public final class TokenTypes {
       // accepts integer values but if it were an integer literal we wouldn't get this
       // far.
       if (real) try {
-         Double.parseDouble(value);
+         JavaNumberText.parseDouble(value);
          return TokenTypes.REAL_NUMBER;
       } catch (NumberFormatException e) {
          // NO ACTION -- exception suppressed

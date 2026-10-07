@@ -18,7 +18,7 @@ public final class JsBackStep {
 
     static JSObject of(BackStepper.BackStep backStep) {
         return create(backStep.getAction(), backStep.getPc(), backStep.getParam1(),
-                backStep.getParam2(), backStep.getParam3(), backStep.isPoke());
+                backStep.getParam2(), backStep.getParam3(), backStep.isPoke(), Long.toString(backStep.getSerial()));
     }
 
     /*
@@ -29,8 +29,8 @@ public final class JsBackStep {
      * by the setter at the moment of the write, beside the `param2` it replaced. It is a signed 32
      * bit int like `param2`; a host that wants the unsigned form takes `newValue >>> 0`.
      */
-    @JSBody(params = { "action", "pc", "param1", "param2", "newValue", "isPoke" },
-            script = "return { action: action, pc: pc, param1: param1, param2: param2, newValue: newValue, isPoke: isPoke };")
+    @JSBody(params = { "action", "pc", "param1", "param2", "newValue", "isPoke", "serial" },
+            script = "return { action: action, pc: pc, param1: param1, param2: param2, newValue: newValue, isPoke: isPoke, serial: serial };")
     private static native JSObject create(int action, int pc, int param1, int param2, int newValue,
-            boolean isPoke);
+            boolean isPoke, String serial);
 }

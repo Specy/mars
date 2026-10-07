@@ -5,6 +5,8 @@ import java.util.*;
 import app.specy.mars.*;
 import app.specy.mars.mips.hardware.*;
 import app.specy.mars.mips.instructions.*;
+import app.specy.mars.mips.io.MIPSIOError;
+import app.specy.mars.mips.io.MIPSIOFailure;
 import app.specy.mars.util.*;
 
 /*
@@ -53,14 +55,19 @@ public class Simulator extends Observable {
     public static final int NO_DEVICE = 0;
     public static volatile int externalInterruptingDevice = NO_DEVICE;
     /**
-     * various reasons for simulate to end...
+     * Why a simulation stopped. MARS numbered these 1 to 6, with one reason for both pause and
+     * stop; this is RARS's enum, so that both simulators report a stop the same way.
      */
-    public static final int BREAKPOINT = 1;
-    public static final int EXCEPTION = 2;
-    public static final int MAX_STEPS = 3; // includes step mode (where maxSteps is 1)
-    public static final int NORMAL_TERMINATION = 4;
-    public static final int CLIFF_TERMINATION = 5; // run off bottom of program
-    public static final int PAUSE_OR_STOP = 6;
+    public enum Reason {
+        BREAKPOINT,
+        /** A runtime failure ended the program; simulate() throws it rather than returning this. */
+        EXCEPTION,
+        MAX_STEPS, // includes step mode (where maxSteps is 1)
+        NORMAL_TERMINATION, // an exit service
+        CLIFF_TERMINATION, // run off bottom of program
+        PAUSE,
+        STOP
+    }
 
     /**
      * Returns the Simulator object
@@ -110,27 +117,42 @@ public class Simulator extends Observable {
      *                    none
      * @param actor       the GUI component responsible for this call, usually GO or
      *                    STEP. null if none.
-     * @return true if execution completed, false otherwise
-     * @throws ProcessingException Throws exception if run-time exception occurs.
+     * @return why the simulation stopped
+     * @throws ProcessingException Throws exception if run-time exception occurs, its address
+     *                             set to the instruction that failed.
      **/
 
-    public boolean simulate(MIPSprogram p, int pc, int maxSteps, int[] breakPoints)
+    public Reason simulate(MIPSprogram p, int pc, int maxSteps, int[] breakPoints)
             throws ProcessingException {
         simulatorThread = new SimThread(p, pc, maxSteps, breakPoints);
         simulatorThread.construct();
         ProcessingException pe = simulatorThread.pe;
         boolean done = simulatorThread.done;
+        Reason reason = simulatorThread.constructReturnReason;
         if (done)
             SystemIO.resetFiles(); // close any files opened in MIPS progra
         this.simulatorThread = null;
         if (pe != null) {
             throw pe;
         }
-        return done;
+        return reason;
     }
 
     public boolean hasTerminated() {
         return simulatorThread == null || simulatorThread.done;
+    }
+
+    /**
+     * Whether there is no statement at {@code address}, so that a program whose counter reaches it
+     * has run off the end. An address that cannot be fetched at all is not that: running it
+     * reports the bad program counter as an exception.
+     */
+    public static boolean noStatementAt(int address) {
+        try {
+            return Globals.memory.getStatementNoNotify(address) == null;
+        } catch (AddressErrorException e) {
+            return false;
+        }
     }
 
 
@@ -208,7 +230,7 @@ public class Simulator extends Observable {
         private boolean done;
         private ProcessingException pe;
         private volatile boolean stop = false;
-        private int constructReturnReason;
+        private Reason constructReturnReason;
 
         /**
          * SimThread constructor. Receives all the information it needs to simulate
@@ -279,7 +301,8 @@ public class Simulator extends Observable {
                 // Program Counter has
                 // not yet been incremented. We'll set the EPC directly here. DPS 8-July-2013
                 Coprocessor0.updateRegister(Coprocessor0.EPC, RegisterFile.getProgramCounter());
-                this.constructReturnReason = EXCEPTION;
+                this.pe.setAddress(RegisterFile.getProgramCounter());
+                this.constructReturnReason = Reason.EXCEPTION;
                 this.done = true;
                 SystemIO.resetFiles(); // close any files opened in MIPS program
                 Simulator.getInstance().notifyObserversOfExecutionStop(maxSteps, pc);
@@ -328,10 +351,11 @@ public class Simulator extends Observable {
             // resolved once rather than walked down from Globals to the program's BackStepper on
             // every instruction.
             boolean backSteppingEnabled = Globals.getSettingsProperties().getBackSteppingEnabled();
-            BackStepper backStepper = backSteppingEnabled ? Globals.program.getBackStepper() : null;
+            BackStepper backStepper = Globals.program.getBackStepper();
 
             while (statement != null) {
                 pc = RegisterFile.getProgramCounter(); // added: 7/26/06 (explanation above)
+                backStepper.beginInstruction(pc, backSteppingEnabled);
                 RegisterFile.incrementPC();
                 // Upstream performed the MIPS instruction in a synchronized block, so that external
                 // threads accessing MIPS memory and registers through the same lock were given full
@@ -367,7 +391,7 @@ public class Simulator extends Observable {
                             if (backSteppingEnabled) {
                                 backStepper.addDoNothing(pc);
                             }
-                            this.constructReturnReason = NORMAL_TERMINATION;
+                            this.constructReturnReason = Reason.NORMAL_TERMINATION;
                             this.done = true;
                             SystemIO.resetFiles(); // close any files opened in MIPS program
                             Simulator.getInstance().notifyObserversOfExecutionStop(maxSteps, pc);
@@ -386,14 +410,20 @@ public class Simulator extends Observable {
                             if (exceptionHandler != null) {
                                 RegisterFile.setProgramCounter(Memory.exceptionHandlerAddress);
                             } else {
-                                this.constructReturnReason = EXCEPTION;
-                                this.pe = pe;
-                                this.done = true;
-                                SystemIO.resetFiles(); // close any files opened in MIPS program
-                                Simulator.getInstance().notifyObserversOfExecutionStop(maxSteps, pc);
-                                return new Boolean(done);
+                                pe.setAddress(pc);
+                                return fail(pe, maxSteps, pc);
                             }
                         }
+                    } catch (MIPSIOFailure | MIPSIOError hostFailure) {
+                        // The host failed to answer a service. That is not the program's doing, so
+                        // it never reaches the program's exception handler: the run ends with it.
+                        return fail(ProcessingException.duringExecution(statement, pc,
+                                ProcessingException.Kind.HANDLER, hostFailure), maxSteps, pc);
+                    } catch (RuntimeException | Error internalFailure) {
+                        return fail(ProcessingException.duringExecution(statement, pc,
+                                ProcessingException.Kind.INTERNAL, internalFailure), maxSteps, pc);
+                    } finally {
+                        backStepper.endInstruction();
                     }
                 } // end synchronized block
 
@@ -408,7 +438,7 @@ public class Simulator extends Observable {
                 // Volatile variable initialized false but can be set true by the main thread.
                 // Used to stop or pause a running MIPS program. See stopSimulation() above.
                 if (stop == true) {
-                    this.constructReturnReason = PAUSE_OR_STOP;
+                    this.constructReturnReason = Reason.PAUSE;
                     this.done = false;
                     Simulator.getInstance().notifyObserversOfExecutionStop(maxSteps, pc);
                     return new Boolean(done);
@@ -416,7 +446,7 @@ public class Simulator extends Observable {
                 // Return if we've reached a breakpoint.
                 if ((breakPoints != null) &&
                         (Arrays.binarySearch(breakPoints, RegisterFile.getProgramCounter()) >= 0)) {
-                    this.constructReturnReason = BREAKPOINT;
+                    this.constructReturnReason = Reason.BREAKPOINT;
                     this.done = false;
                     Simulator.getInstance().notifyObserversOfExecutionStop(maxSteps, pc);
                     return new Boolean(done); // false;
@@ -426,7 +456,13 @@ public class Simulator extends Observable {
                 if (maxSteps > 0) {
                     steps++;
                     if (steps >= maxSteps) {
-                        this.constructReturnReason = MAX_STEPS;
+                        // The instruction may have been the program's last: then the call that ran
+                        // it is the one that ran off the end, rather than the next one, so the
+                        // reason agrees with the program counter, which has nothing left to run.
+                        if (noStatementAt(RegisterFile.getProgramCounter())) {
+                            return dropOffBottom(maxSteps, pc);
+                        }
+                        this.constructReturnReason = Reason.MAX_STEPS;
                         this.done = false;
                         Simulator.getInstance().notifyObserversOfExecutionStop(maxSteps, pc);
                         return new Boolean(done);// false;
@@ -450,13 +486,22 @@ public class Simulator extends Observable {
                     // Program Counter has
                     // not yet been incremented. We'll set the EPC directly here. DPS 8-July-2013
                     Coprocessor0.updateRegister(Coprocessor0.EPC, RegisterFile.getProgramCounter());
-                    this.constructReturnReason = EXCEPTION;
+                    this.pe.setAddress(RegisterFile.getProgramCounter());
+                    this.constructReturnReason = Reason.EXCEPTION;
                     this.done = true;
                     SystemIO.resetFiles(); // close any files opened in MIPS program
                     Simulator.getInstance().notifyObserversOfExecutionStop(maxSteps, pc);
                     return new Boolean(done);
                 }
             }
+            // If we got here it was due to null statement, which means program
+            // counter "fell off the end" of the program. NOTE: Assumes the
+            // "while" loop contains no "break;" statements.
+            return dropOffBottom(maxSteps, pc);
+        }
+
+        /** The program counter "fell off the end" of the program: there is no statement to run. */
+        private Object dropOffBottom(int maxSteps, int pc) {
             // DPS July 2007. This "if" statement is needed for correct program
             // termination if delayed branching on and last statement in
             // program is a branch/jump. Program will terminate rather than branch,
@@ -464,14 +509,21 @@ public class Simulator extends Observable {
             if (DelayedBranch.isTriggered() || DelayedBranch.isRegistered()) {
                 DelayedBranch.clear();
             }
-            // If we got here it was due to null statement, which means program
-            // counter "fell off the end" of the program. NOTE: Assumes the
-            // "while" loop contains no "break;" statements.
-            this.constructReturnReason = CLIFF_TERMINATION;
+            this.constructReturnReason = Reason.CLIFF_TERMINATION;
             this.done = true;
             SystemIO.resetFiles(); // close any files opened in MIPS program
             Simulator.getInstance().notifyObserversOfExecutionStop(maxSteps, pc);
             return new Boolean(done); // true; // execution completed
+        }
+
+        /** A runtime failure ends the program; simulate() throws it. */
+        private Object fail(ProcessingException failure, int maxSteps, int pc) {
+            this.constructReturnReason = Reason.EXCEPTION;
+            this.pe = failure;
+            this.done = true;
+            SystemIO.resetFiles(); // close any files opened in MIPS program
+            Simulator.getInstance().notifyObserversOfExecutionStop(maxSteps, pc);
+            return new Boolean(done);
         }
 
         /**
