@@ -86,6 +86,9 @@ public class BackStepper {
     // Module-lifetime identities: neither Undo, initialize nor reassembly can reuse one.
     // Only the bounded BackStep slots retain identities; no execution journal grows with a run.
     private static long nextSerial = 1;
+    private long instructionsExecuted;
+    public long getInstructionsExecuted() { return instructionsExecuted; }
+    public void resetInstructionsExecuted() { instructionsExecuted = 0; }
     private long instructionSerial;
     private long pokeSerial;
     private int instructionPc;
@@ -112,6 +115,7 @@ public class BackStepper {
 
     /** Finishes even a failed instruction, giving a write-free instruction its own entry. */
     public void endInstruction() {
+        instructionsExecuted++;
         try {
             if (!instructionDiscarded) addDoNothing(instructionPc);
         } finally {
@@ -260,6 +264,7 @@ public class BackStepper {
                     throw new RuntimeException(message);
                 }
             } while (!backSteps.empty() && sameGroup(first, (BackStep) backSteps.peek()));
+            if (first.pc != NOT_PC_VALUE) instructionsExecuted--;
             engaged = true; // RESET IT (was disabled at top of loop -- see comment)
         }
     }

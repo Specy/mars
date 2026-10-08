@@ -357,7 +357,7 @@ public class SystemIO {
          return -1;
       } // fileErrorString would have been set
 
-      if (flags == O_RDONLY) // Open for reading only
+      if (flags == O_RDONLY || flags == 2) // Open for reading, or reading and writing (2, the runtime's "r+")
       {
          try {
             retValue = io.openFile(filename, flags, false);
@@ -367,7 +367,7 @@ public class SystemIO {
                   "Error with file " + filename);
             retValue = -1;
          }
-      } else if ((flags & O_WRONLY) != 0) // Open for writing only
+      } else if ((flags & O_WRONLY) != 0 || flags == 10) // Open for writing, or reading and writing (3 "w+", 10 "a+")
       {
          // Set up output stream to disk file
          try {
@@ -541,7 +541,7 @@ public class SystemIO {
             return -1;
          }
 
-         if (flag != O_RDONLY && flag != O_WRONLY && flag != (O_WRONLY | O_APPEND)) // Only read and write are
+         if (flag != O_RDONLY && flag != O_WRONLY && flag != (O_WRONLY | O_APPEND) && flag != 2 && flag != 3 && flag != 10) // Only read and write are
                                                                                     // implemented
          {
             fileErrorString = new String(

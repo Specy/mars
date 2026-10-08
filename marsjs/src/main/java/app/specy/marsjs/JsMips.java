@@ -157,6 +157,7 @@ public class JsMips {
             throw new IllegalStateException("Cannot initialize during an instruction or poke");
         }
         this.main.initialize(startAtMain);
+        this.main.getProgram().getBackStepper().resetInstructionsExecuted();
         openPoke = null;
         pokeRecords.clear();
     }
