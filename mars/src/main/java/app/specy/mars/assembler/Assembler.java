@@ -61,6 +61,7 @@ import app.specy.mars.util.Utf8;
  **/
 
 public class Assembler {
+    private String dataSection = ".data";
    private List<ProgramStatement> machineList;
    private ErrorList errors;
    private boolean inDataSegment; // status maintained by parser
@@ -228,6 +229,7 @@ public class Assembler {
       currentFileDataSegmentForwardReferences = new DataSegmentForwardReferences();
       accumulatedDataSegmentForwardReferences = new DataSegmentForwardReferences();
       Globals.symbolTable.clear();
+      MemoryLayoutFacts.clear();
       Globals.memory.clear();
       this.machineList = new ArrayList();
       this.errors = new ErrorList();
@@ -499,7 +501,19 @@ public class Assembler {
       if (errors.errorsOccurred() || errors.warningsOccurred() && warningsAreErrors) {
          throw new ProcessingException(errors);
       }
-      return this.machineList;
+      for (ProgramStatement layoutStatement : this.machineList) {
+            if (!libraryStatements.contains(layoutStatement)) MemoryLayoutFacts.item(layoutStatement.getAddress(), 4, 0,
+                layoutStatement.getAddress() < 0 ? ".ktext" : ".text", 4);
+        }
+        for (MIPSprogram program : tokenizedProgramFiles) for (Object entry : program.getLocalSymbolTable().getAllSymbols()) {
+            Symbol symbol = (Symbol) entry;
+            MemoryLayoutFacts.symbol(symbol.getName(), symbol.getAddress(), symbol.getType(), false, program.getFilename());
+        }
+        for (Object entry : Globals.symbolTable.getAllSymbols()) {
+            Symbol symbol = (Symbol) entry;
+            MemoryLayoutFacts.symbol(symbol.getName(), symbol.getAddress(), symbol.getType(), false, tokenizedProgramFiles.get(0).getFilename());
+        }
+        return this.machineList;
    } // assemble()
 
    // //////////////////////////////////////////////////////////////////////
@@ -815,6 +829,7 @@ public class Assembler {
       if (name.startsWith(".data") || name.startsWith(".rodata") || name.startsWith(".rdata")
             || name.startsWith(".sdata") || name.startsWith(".bss") || name.startsWith(".sbss")) {
          this.inDataSegment = true;
+         dataSection = name;
          this.autoAlign = true;
          this.dataAddress.setAddressSpace(this.dataAddress.USER);
       } else if (name.startsWith(".text")) {
@@ -955,6 +970,7 @@ public class Assembler {
       } else if (direct == Directives.RDATA || direct == Directives.BSS) {
          // this simulator has one data segment, which already reads as zero
          this.inDataSegment = true;
+         dataSection = direct.getName();
          this.autoAlign = true;
          this.dataAddress.setAddressSpace(this.dataAddress.USER);
       } else if (direct == Directives.SECTION) {
@@ -1004,13 +1020,15 @@ public class Assembler {
          this.dataAddress.set(this.alignToBoundary(this.dataAddress.get(), commAlignment));
          fileCurrentlyBeingAssembled.getLocalSymbolTable().addSymbol(tokens.get(1),
                this.dataAddress.get(), Symbol.DATA_SYMBOL, this.errors);
-         this.dataAddress.increment(Binary.stringToInt(tokens.get(2).getValue()));
+         MemoryLayoutFacts.item(this.dataAddress.get(), Binary.stringToInt(tokens.get(2).getValue()), 2, dataSection, 1);
+      this.dataAddress.increment(Binary.stringToInt(tokens.get(2).getValue()));
          if (direct == Directives.COMM) {
             // .comm is visible to other files, which is what .globl already arranges
             globalDeclarationList.add(tokens.get(1));
          }
       } else if (direct == Directives.DATA || direct == Directives.KDATA) {
          this.inDataSegment = true;
+         dataSection = direct.getName();
          this.autoAlign = true;
          this.dataAddress.setAddressSpace((direct == Directives.DATA) ? this.dataAddress.USER
                : this.dataAddress.KERNEL);
@@ -1084,7 +1102,8 @@ public class Assembler {
                return;
             }
             int value = Binary.stringToInt(tokens.get(1).getValue()); // KENV 1/6/05
-            this.dataAddress.increment(value);
+            MemoryLayoutFacts.item(this.dataAddress.get(), value, 2, dataSection, 1);
+      this.dataAddress.increment(value);
          }
       } else if (direct == Directives.EXTERN) {
          if (tokens.size() != 3) {
@@ -1105,6 +1124,7 @@ public class Assembler {
          if (Globals.symbolTable.getAddress(tokens.get(1).getValue()) == SymbolTable.NOT_FOUND) {
             Globals.symbolTable.addSymbol(tokens.get(1), this.externAddress,
                   Symbol.DATA_SYMBOL, errors);
+            MemoryLayoutFacts.item(this.externAddress, size, 1, ".extern", 1);
             this.externAddress += size;
          }
       } else if (direct == Directives.SET) {
@@ -1551,6 +1571,7 @@ public class Assembler {
                "\""
                      + this.dataAddress.get() + "\" is not a valid data segment address"));
       }
+      MemoryLayoutFacts.item(this.dataAddress.get(), DataTypes.CHAR_SIZE, 1, dataSection, 1);
       this.dataAddress.increment(DataTypes.CHAR_SIZE);
    }
 
@@ -1587,6 +1608,7 @@ public class Assembler {
          return this.dataAddress.get();
       }
       int address = this.dataAddress.get();
+      MemoryLayoutFacts.item(this.dataAddress.get(), lengthInBytes, 1, dataSection, lengthInBytes);
       this.dataAddress.increment(lengthInBytes);
       return address;
    }
@@ -1610,6 +1632,7 @@ public class Assembler {
                      + "\" is not a valid data segment address"));
          return;
       }
+      MemoryLayoutFacts.item(this.dataAddress.get(), lengthInBytes, 1, dataSection, lengthInBytes);
       this.dataAddress.increment(lengthInBytes);
    }
 

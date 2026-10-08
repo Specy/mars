@@ -127,6 +127,23 @@ public class JsMips {
      * Where the program's heap, and so the first block sbrk hands out, starts: 0x10040000, or the
      * first page after static data in a GNU-profile program whose static data reaches past it.
      */
+    /** Flat layout tuples: address, length, kind, section index, alignment. */
+    @JSExport public int[] getLayoutItems() { return app.specy.mars.assembler.MemoryLayoutFacts.items(); }
+    @JSExport public String[] getSectionNames() { return app.specy.mars.assembler.MemoryLayoutFacts.sections(); }
+    @JSExport public String[] getSymbolFiles() { return app.specy.mars.assembler.MemoryLayoutFacts.files(); }
+    @JSExport public String[] getSymbolNames() { return app.specy.mars.assembler.MemoryLayoutFacts.names(); }
+    /** Symbol tuples: address, data flag, library owner flag. */
+    @JSExport public int[] getSymbolValues() { return app.specy.mars.assembler.MemoryLayoutFacts.symbols(); }
+    @JSExport public int getHeapBreak() { return app.specy.mars.mips.hardware.Memory.heapAddress; }
+    @JSExport public int getStackTop() { return app.specy.mars.assembler.MemoryLayoutFacts.stackTop; }
+    /** Half-open start and end pairs of the text and kernel text segments, which hold statements. */
+    @JSExport public int[] getTextSegments() {
+        return new int[] {
+            app.specy.mars.mips.hardware.Memory.textBaseAddress, app.specy.mars.mips.hardware.Memory.textLimitAddress,
+            app.specy.mars.mips.hardware.Memory.kernelTextBaseAddress, app.specy.mars.mips.hardware.Memory.kernelTextLimitAddress
+        };
+    }
+
     @JSExport
     public int getHeapStart() {
         return this.main.getHeapStart();
@@ -157,6 +174,7 @@ public class JsMips {
             throw new IllegalStateException("Cannot initialize during an instruction or poke");
         }
         this.main.initialize(startAtMain);
+        app.specy.mars.assembler.MemoryLayoutFacts.resetStack(RegisterFile.getValue(29));
         this.main.getProgram().getBackStepper().resetInstructionsExecuted();
         openPoke = null;
         pokeRecords.clear();
@@ -812,7 +830,7 @@ public class JsMips {
         for (int i = 0; i < length; i++) {
             // No notification: the host inspecting memory is not the program reading it, and a
             // memory viewer must not make a memory-mapped register consume its pending input.
-            memory[i] = Globals.memory.getByteNoNotify(address + i);
+            memory[i] = Globals.memory.getByteForHost(address + i);
         }
         return memory;
     }

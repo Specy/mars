@@ -57,6 +57,8 @@ public class BackStepper {
     private static final int COPROC1_REGISTER_RESTORE = 7;
     private static final int COPROC1_CONDITION_CLEAR = 8;
     private static final int COPROC1_CONDITION_SET = 9;
+    private static final int HEAP_RESTORE = 100;
+    private static final int STACK_TOP_RESTORE = 101;
     private static final int DO_NOTHING = 10; // instruction does not write anything.
     /**
      * One whole poke, however many values it wrote: the entry carries its restores itself rather
@@ -265,6 +267,7 @@ public class BackStepper {
                 }
             } while (!backSteps.empty() && sameGroup(first, (BackStep) backSteps.peek()));
             if (first.pc != NOT_PC_VALUE) instructionsExecuted--;
+            app.specy.mars.assembler.MemoryLayoutFacts.previousSp = RegisterFile.getValue(29);
             engaged = true; // RESET IT (was disabled at top of loop -- see comment)
         }
     }
@@ -272,6 +275,10 @@ public class BackStepper {
     /** Carries out one recorded restore. One back step holds one; a poke entry holds its writes. */
     private static void applyRestore(int action, int param1, int param2, int param3) throws AddressErrorException {
         switch (action) {
+            case HEAP_RESTORE:
+                app.specy.mars.mips.hardware.Memory.heapAddress = param1; break;
+            case STACK_TOP_RESTORE:
+                app.specy.mars.assembler.MemoryLayoutFacts.stackTop = param1; break;
             case MEMORY_RESTORE_RAW_WORD:
                 Globals.memory.setRawWord(param1, param2);
                 break;
@@ -553,6 +560,9 @@ public class BackStepper {
      * {@code low} are its two halves, or {@code high} is RandomStreams.ABSENT when the generator
      * does not exist yet.
      */
+    public void addHeapRestore(int old) { backSteps.push(HEAP_RESTORE, pc(), old); }
+    public void addStackTopRestore(int old) { backSteps.push(STACK_TOP_RESTORE, pc(), old); }
+
     public void addRandomStreamRestore(int index, int high, int low) {
         backSteps.push(RANDOM_STREAM_RESTORE, pc(), index, high, low);
     }

@@ -423,6 +423,7 @@ public class Simulator extends Observable {
                         return fail(ProcessingException.duringExecution(statement, pc,
                                 ProcessingException.Kind.INTERNAL, internalFailure), maxSteps, pc);
                     } finally {
+                        app.specy.mars.assembler.MemoryLayoutFacts.refreshStack(RegisterFile.getValue(29));
                         backStepper.endInstruction();
                     }
                 } // end synchronized block

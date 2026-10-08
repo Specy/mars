@@ -361,7 +361,7 @@ including file, and includes beginning with `/` resolve from the virtual root.
 *   `getProgramCounter(): number`: Returns the current value of the program counter.
 *   `getRegistersValues(): number[]`: Returns an array of all register values.
 *   `getUndoStack(): JsBackStep[]`: Returns the undo stack, which contains information about previous simulation steps.
-*   `readMemoryBytes(address: number, length: number): number[]`: Reads `length` bytes from memory starting at `address`. Notifies no memory observer: inspecting memory from the host is not the program reading it.
+*   `readMemoryBytes(address: number, length: number): number[]`: Reads `length` bytes from memory starting at `address`. Notifies no memory observer: inspecting memory from the host is not the program reading it. Text reads as the encodings of the statements it holds, in the current byte order, and as zero where no statement is; the program's own loads from text still fault unless self-modifying code is enabled.
 *   `setMemoryBytes(address: number, bytes: number[]): void`: Writes `bytes` to memory starting at `address`, the way the program does: write observers are notified and, while undo is enabled, an undo step is recorded per byte.
 *   `setPeripheralWord(address: number, value: number): void`: Writes one word-aligned word as a peripheral would, notifying no observer and recording no undo step. See [memory observers](#memory-observers).
 *   `addMemoryWriteObserver(startAddress: number, endAddress: number, handler): number`: Observes every write in an address range. See [memory observers](#memory-observers).
@@ -409,3 +409,27 @@ instructions still expose a serial inside handlers. Match and retain host frames
 `getUndoGroups`/`getUndoGroupsRange`, never by PC; drop frames whose groups are no longer retained.
 
 `initialize` is rejected while an instruction or Poke is active.
+
+### Memory layout and bounds
+
+After a successful `assemble()`, `getLayoutItems()` returns an `Int32Array` of
+five-field tuples: address, byte length, kind (`0` code, `1` data, `2` reserved),
+index into `getSectionNames()`, and byte alignment. Convert addresses to unsigned
+32-bit values in JavaScript (`address >>> 0`). Items describe the assembled program,
+including the kept sections of loaded library members; zero-length items are omitted.
+
+`getSymbolNames()` and `getSymbolFiles()` are parallel string arrays.
+`getSymbolValues()` has three integers per name: address, data flag, library flag.
+A library flag of `1` includes locals of data-only library members. The source file
+identifies an included file, rather than only its enclosing compilation unit.
+
+After `initialize()`, `getHeapStart()` and `getHeapBreak()` bound the current heap.
+An allocation's previous break is recorded with its instruction, so Undo restores
+it and executing that instruction again makes the same allocation.
+
+`getStackTop()` reports the current stack top. It starts at the initialized `$sp`;
+a single instruction moving `$sp` by more than 4096 bytes starts a new stack, and
+raising `$sp` above the top raises it. Undo restores the previous top.
+
+`getTextSegments()` returns half-open start and end pairs for the text and kernel text segments, which hold
+statements rather than bytes: `readMemoryBytes` reads them, `setMemoryBytes` cannot write them.
