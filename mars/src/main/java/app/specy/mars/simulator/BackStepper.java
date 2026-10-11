@@ -678,39 +678,37 @@ public class BackStepper {
     }
 
     // *****************************************************************************
-    // special purpose stack class for backstepping. You've heard of circular queues
-    // implemented with an array, right? This is a circular stack! When full, the
-    // newly-pushed item overwrites the oldest item, with circular top! All
-    // operations
-    // are constant time. Upstream synchronized it too, to be safe (it was used by both the
-    // simulation thread and the GUI thread for the back-step button).
-    // Upon construction, it is filled with newly-created empty BackStep objects
-    // which
-    // will exist for the life of the stack. Push does not create a BackStep object
-    // but instead overwrites the contents of the existing one. Thus during MIPS
-    // program (simulated) execution, BackStep objects are never created or junked
-    // regardless of how many steps are executed. This will speed things up a bit
-    // and make life easier for the garbage collector.
+    // Circular stack for backstepping. Storage grows geometrically as entries are pushed,
+    // up to capacity. At the limit, a new entry overwrites the oldest complete group.
+    // A slot's BackStep is created on first use and reused thereafter, so a full stack
+    // creates no BackSteps during execution. The headless TeaVM Core is single threaded.
 
     public class BackstepStack {
-        private int capacity;
+        private final int capacity;
         private int size;
         private int top;
         private BackStep[] stack;
 
-        // Stack is created upon successful assembly or reset. The one-time overhead of
-        // creating all the BackStep objects will not be noticed by the user, and
-        // enhances
-        // runtime performance by not having to create or recycle them during MIPS
-        // program execution.
-        // The slots start empty: a slot's BackStep is created the first time the stack reaches it,
-        // so the capacity can be large enough for a library call without a short program paying for
-        // it, and once the stack has wrapped execution never creates or junks one.
+        // Assembly or reset starts with no allocated slots.
         private BackstepStack(int capacity) {
             this.capacity = capacity;
             this.size = 0;
             this.top = -1;
-            this.stack = new BackStep[capacity];
+            this.stack = new BackStep[0];
+        }
+
+        // Allocate only the slots execution reaches, up to the configured limit. A growth
+        // keeps the live entries oldest first and transfers their reusable BackStep objects.
+        private void grow() {
+            int allocated = stack.length;
+            int next = allocated == 0 ? Math.min(64, capacity)
+                    : allocated + Math.min(allocated, capacity - allocated);
+            BackStep[] grown = new BackStep[next];
+            for (int i = 0; i < size; i++) {
+                grown[i] = fromTop(size - 1 - i);
+            }
+            stack = grown;
+            top = size - 1;
         }
 
         // The object in the slot the top has just moved onto, created the first time it is used.
@@ -729,14 +727,14 @@ public class BackStepper {
         public BackStep fromTop(int index) {
             if (index < 0 || index >= size) throw new IndexOutOfBoundsException("No back step " + index);
             int slot = top - index;
-            return stack[slot < 0 ? slot + capacity : slot];
+            return stack[slot < 0 ? slot + stack.length : slot];
         }
 
         public BackStep[] getStack() {
             //get only the used part of the stack
             BackStep[] usedStack = new BackStep[size];
             for (int i = 0; i < size; i++) {
-                usedStack[i] = stack[(top - i + capacity) % capacity];
+                usedStack[i] = stack[(top - i + stack.length) % stack.length];
             }
             return usedStack;
         }
@@ -749,6 +747,7 @@ public class BackStepper {
         // If this instruction alone exceeded capacity, forget it and the rest of its writes.
         private boolean advance() {
             if (capacity == 0 || instructionDiscarded && instructionSerial != 0) return false;
+            if (size == stack.length && stack.length < capacity) grow();
             if (size == capacity) {
                 long oldest = fromTop(size - 1).serial;
                 do { size--; } while (size > 0 && fromTop(size - 1).serial == oldest);
@@ -758,7 +757,7 @@ public class BackStepper {
                 }
             }
             int next = top + 1;
-            top = next == capacity ? 0 : next;
+            top = next == stack.length ? 0 : next;
             size++;
             return true;
         }
@@ -806,7 +805,7 @@ public class BackStepper {
             if (size == 1) {
                 top = -1;
             } else {
-                top = (top + capacity - 1) % capacity;
+                top = (top + stack.length - 1) % stack.length;
             }
             size--;
             return bs;
