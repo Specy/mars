@@ -361,6 +361,12 @@ have 4,080 bytes for them`); `MIPS.checkProgramArguments(argv)` throws the same 
 An empty array stores nothing, as before `setProgramArguments` is called: `$a0` and `$a1` start
 at 0.
 
+`getProgramArgumentsLayout()` says where the last `initialize` put them, for a debugger to name
+the bytes: an `Int32Array` of the range's start and end (half-open, from the array to the stack
+base), argc, the array's address, then each string's address, `argv[0]` first. For the example
+above, `[0x7fffffd4, 0x7ffffffc, 3, 0x7fffffd4, 0x7fffffe5, 0x7fffffec, 0x7ffffff2]`. It is empty
+when that `initialize` stored nothing.
+
 MARS's own command-line arguments (`ProgramArgumentList`, which this does not use) put argc and
 the pointers below the stack pointer and lower it, and start `argv` at the first argument.
 
@@ -379,6 +385,7 @@ including file, and includes beginning with `/` resolve from the virtual root.
 *   `assemble()`: Assembles the program.
 *   `initialize(startAtMain: boolean)`: Initializes the simulator. If `startAtMain` is true, execution begins at the `main` label; otherwise, it starts at the first instruction. It stores the `argv` `setProgramArguments` set, if any.
 *   `setProgramArguments(argv: string[]): void`: The `argv` every later `initialize` stores above the stack. See [Program arguments](#program-arguments).
+*   `getProgramArgumentsLayout(): Int32Array`: Where the last `initialize` stored that `argv`: the range, argc, the array and each string's address. See [Program arguments](#program-arguments).
 *   `step(): Promise<StopReason>`: Executes a single instruction. See [Running and stopping](#running-and-stopping) for every run call's `StopReason` and `RuntimeError`.
 *   `simulate(): Promise<StopReason>`: Simulates the program until it stops.
 *   `simulateWithLimit(limit: number): Promise<StopReason>`: Simulates the program for a maximum of `limit` instructions.

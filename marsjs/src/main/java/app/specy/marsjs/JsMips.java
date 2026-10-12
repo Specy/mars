@@ -176,7 +176,7 @@ public class JsMips {
         }
         this.main.initialize(startAtMain);
         // after the registers are reset and before the first instruction, outside the history
-        ProgramArgumentsAboveStack.store(programArguments);
+        programArgumentsLayout = ProgramArgumentsAboveStack.store(programArguments);
         app.specy.mars.assembler.MemoryLayoutFacts.resetStack(RegisterFile.getValue(29));
         this.main.getProgram().getBackStepper().resetInstructionsExecuted();
         openPoke = null;
@@ -186,6 +186,21 @@ public class JsMips {
 
     /** The argv every start stores, {@code argv[0]} included; empty stores none. */
     private String[] programArguments = new String[0];
+
+    /** Where the last {@link #initialize(boolean)} stored the argv, as {@link #getProgramArgumentsLayout()} gives it. */
+    private int[] programArgumentsLayout = new int[0];
+
+    /**
+     * Where the last {@link #initialize(boolean)} stored the program's argv: the start and end of
+     * the half-open range it wrote (the array's address and the stack base), {@code argc}, the
+     * array's address, then the address of each string, {@code argv[0]} first. Empty when it stored
+     * nothing, or before the first initialize. The facts stay as they were written, whatever the
+     * program does to that memory afterwards.
+     */
+    @JSExport
+    public int[] getProgramArgumentsLayout() {
+        return programArgumentsLayout.clone();
+    }
 
     /**
      * The program's argv, {@code argv[0]} (its name) included, which every later

@@ -192,3 +192,33 @@ main:   lw   $t0, 4($a1)
         [2, argv, STACK_POINTER])
     assert.equal(cString(mips, word(mips, argv + 4)), 'abc')
 }
+
+// 8. The layout a debugger reads: the range written, argc, the array and each string's address,
+//    as they were stored, whatever the program writes there afterwards; empty when none was stored.
+{
+    const layoutOf = mips => Array.from(mips.getProgramArgumentsLayout(), u32)
+    const mips = core(`
+main:   sw   $zero, 0($a1)
+        li   $v0, 10
+        syscall`)
+    assert.deepEqual(layoutOf(mips), [], 'nothing before the first initialize')
+    mips.setProgramArguments(['./main', 'hello', 'two words'])
+    assert.deepEqual(layoutOf(mips), [], 'a new argv waits for the next start')
+    mips.initialize(true)
+    const expected = [0x7fffffd4, STACK_BASE, 3, 0x7fffffd4, 0x7fffffe5, 0x7fffffec, 0x7ffffff2]
+    assert.deepEqual(layoutOf(mips), expected)
+    assert.equal(u32(mips.getRegisterValue('$a1')), expected[3], 'the array is the one $a1 points at')
+    await runToEnd(mips)
+    assert.equal(word(mips, expected[3]), 0, 'the program overwrote argv[0]')
+    assert.deepEqual(layoutOf(mips), expected, 'the layout is what was stored')
+    const copy = mips.getProgramArgumentsLayout()
+    copy[0] = 0
+    assert.deepEqual(layoutOf(mips), expected, 'each call gives a copy')
+
+    mips.setProgramArguments(['./main'])
+    mips.initialize(true)
+    assert.deepEqual(layoutOf(mips), [0x7fffffec, STACK_BASE, 1, 0x7fffffec, 0x7ffffff5])
+    mips.setProgramArguments([])
+    mips.initialize(true)
+    assert.deepEqual(layoutOf(mips), [], 'none stored, none reported')
+}

@@ -706,6 +706,17 @@ export interface JsMips {
     setProgramArguments(argv: string[]): void;
 
     /**
+     * Where the last `initialize` stored the program's argv, for a debugger to show: the start and
+     * end of the half-open range it wrote (the array's address and the stack base), argc, the
+     * address of the NULL-terminated array of pointers (`$a1`), then the address of each string,
+     * `argv[0]` first, each ending in a NUL before the next one starts. Empty when that `initialize`
+     * stored nothing, or before the first one. Addresses are unsigned 32-bit values (`>>> 0`); they
+     * are what was written, whatever the program does to that memory afterwards. See
+     * [Program arguments](#program-arguments) in the README.
+     */
+    getProgramArgumentsLayout(): Int32Array;
+
+    /**
      * Executes a single instruction.
      *
      * Resolves to why it stopped: `MAX_STEPS` normally, `NORMAL_TERMINATION` for an exit,
