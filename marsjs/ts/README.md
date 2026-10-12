@@ -331,6 +331,39 @@ segment, which static data and the heap share, ends at 0x10400000.
 `getHeapStart()` reports where the heap starts, and `initialize` empties it again. An allocator
 built on sbrk follows the heap wherever it starts.
 
+## Program arguments
+
+`setProgramArguments(argv)` gives the program an `argv`, `argv[0]` (its name) included, which every
+later `initialize` stores before the first instruction, until it is set again:
+
+```typescript
+mipsSimulator.setProgramArguments(['./main', 'hello', 'two words']);
+mipsSimulator.initialize(true);
+// $a0 = 3 (argc), $a1 = 0x7fffffd4 (argv), $sp = 0x7fffeffc as always
+```
+
+Everything goes in the gap MARS leaves between the initial stack pointer and the stack base, so
+`$sp` starts where it always does:
+
+*   the strings, UTF-8 and each ending in a NUL, `argv[0]` first, end at the stack base
+    (0x7ffffffc): `./main` at 0x7fffffe5, `hello` at 0x7fffffec, `two words` at 0x7ffffff2;
+*   right below them, aligned down to a word, the NULL-terminated array of pointers to them,
+    here from 0x7fffffd4 to 0x7fffffe3, any byte between it and the strings zero;
+*   `$a0` is argc and `$a1` the array's address.
+
+The writes are not steps of the undo history, so undoing back to the start keeps them, and the
+next `initialize` stores them again over anything the program wrote on them. They must end at
+least 16 bytes above the initial stack pointer: 4,080 bytes in all (`MIPS.programArgumentsSpace()`)
+for the strings and the array together. `setProgramArguments` throws an `Error` with a sentence for
+the person, and keeps the `argv` it had, for more than 1,024 words after `argv[0]`, a word with a
+NUL, or more than fits (`Arguments take 4,084 bytes with the program name and argv; MIPS programs
+have 4,080 bytes for them`); `MIPS.checkProgramArguments(argv)` throws the same without a program.
+An empty array stores nothing, as before `setProgramArguments` is called: `$a0` and `$a1` start
+at 0.
+
+MARS's own command-line arguments (`ProgramArgumentList`, which this does not use) put argc and
+the pointers below the stack pointer and lower it, and start `argv` at the first argument.
+
 ## API
 
 ### `makeMipsFromFiles(files: MIPSSourceSet, entryFile: string): JsMips`
@@ -344,7 +377,8 @@ including file, and includes beginning with `/` resolve from the virtual root.
 #### Methods
 
 *   `assemble()`: Assembles the program.
-*   `initialize(startAtMain: boolean)`: Initializes the simulator. If `startAtMain` is true, execution begins at the `main` label; otherwise, it starts at the first instruction.
+*   `initialize(startAtMain: boolean)`: Initializes the simulator. If `startAtMain` is true, execution begins at the `main` label; otherwise, it starts at the first instruction. It stores the `argv` `setProgramArguments` set, if any.
+*   `setProgramArguments(argv: string[]): void`: The `argv` every later `initialize` stores above the stack. See [Program arguments](#program-arguments).
 *   `step(): Promise<StopReason>`: Executes a single instruction. See [Running and stopping](#running-and-stopping) for every run call's `StopReason` and `RuntimeError`.
 *   `simulate(): Promise<StopReason>`: Simulates the program until it stops.
 *   `simulateWithLimit(limit: number): Promise<StopReason>`: Simulates the program for a maximum of `limit` instructions.

@@ -16,6 +16,7 @@ import app.specy.mars.mips.hardware.Coprocessor1;
 import app.specy.mars.mips.hardware.Register;
 import app.specy.mars.mips.hardware.RegisterFile;
 import app.specy.mars.simulator.BackStepper;
+import app.specy.mars.simulator.ProgramArgumentsAboveStack;
 import app.specy.mars.simulator.Simulator;
 import org.teavm.jso.JSExceptions;
 import org.teavm.jso.JSExport;
@@ -174,12 +175,45 @@ public class JsMips {
             throw new IllegalStateException("Cannot initialize during an instruction or poke");
         }
         this.main.initialize(startAtMain);
+        // after the registers are reset and before the first instruction, outside the history
+        ProgramArgumentsAboveStack.store(programArguments);
         app.specy.mars.assembler.MemoryLayoutFacts.resetStack(RegisterFile.getValue(29));
         this.main.getProgram().getBackStepper().resetInstructionsExecuted();
         openPoke = null;
         pokeRecords.clear();
     }
 
+
+    /** The argv every start stores, {@code argv[0]} included; empty stores none. */
+    private String[] programArguments = new String[0];
+
+    /**
+     * The program's argv, {@code argv[0]} (its name) included, which every later
+     * {@link #initialize(boolean)} stores above the stack with {@code $a0} = argc and {@code $a1} =
+     * argv, until it is set again; an empty array stores none. See
+     * {@link ProgramArgumentsAboveStack} for the layout.
+     *
+     * @throws IllegalArgumentException with a sentence for the person when the words cannot be
+     *                                  stored: too many, a NUL, or more than fits above the stack
+     */
+    @JSExport
+    public void setProgramArguments(String[] argv) {
+        String problem = ProgramArgumentsAboveStack.problem(argv);
+        if (problem != null) throw new IllegalArgumentException(problem);
+        this.programArguments = argv.clone();
+    }
+
+    /** Why {@link #setProgramArguments(String[])} would refuse {@code argv}, or null. */
+    @JSExport
+    public static String programArgumentsProblem(String[] argv) {
+        return ProgramArgumentsAboveStack.problem(argv);
+    }
+
+    /** The most bytes the program name, the Arguments and their argv array may take. */
+    @JSExport
+    public static int programArgumentsSpace() {
+        return (int) ProgramArgumentsAboveStack.space();
+    }
 
     /*
      * Simulation runs inside a single long-lived TeaVM coroutine ("green thread"), so that a
