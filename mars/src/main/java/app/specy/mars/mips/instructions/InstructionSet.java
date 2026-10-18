@@ -778,7 +778,7 @@ public class InstructionSet {
                         }));
         instructionList.add(
                 new BasicInstruction("beq $t1,$t2,label",
-                        "Branch on equal : Branches to 'label' if $t1 == $t2. Uses a PC-relative 16-bit signed offset (multiplied by 4) so the target must be within ±32 KB. Commonly the first half of an if/else test.",
+                        "Branch on equal : Branches to 'label' if $t1 == $t2. Uses a PC-relative 16-bit signed offset (multiplied by 4) so the target must be within 32K instructions (±128 KB). Commonly the first half of an if/else test.",
                         BasicInstructionFormat.I_BRANCH_FORMAT,
                         "000100 fffff sssss tttttttttttttttt",
                         new SimulationCode() {
