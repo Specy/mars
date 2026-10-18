@@ -378,6 +378,25 @@ Creates a `JsMips` instance from a snapshotted virtual source tree. Source paths
 root-relative, case-sensitive POSIX paths such as `src/main.asm`. Relative includes resolve from the
 including file, and includes beginning with `/` resolve from the virtual root.
 
+### `MIPS.getInstructionSet(): JsInstruction[]`
+
+Returns an array of objects, one for each instruction form MARS assembles, basic and pseudo alike
+(name, example, description, tokens, isPseudo, expansion, compactExpansion). `example` is the form
+as MARS writes it, such as `lw $t1,-100($t2)`, and `tokens` are its tokens. `isPseudo` is true for a
+pseudo-instruction, which the assembler expands into basic instructions. A mnemonic can have both
+kinds of form: `lw $t1,-100($t2)` is basic, `lw $t1,label` is a pseudo-instruction.
+
+`expansion` lists the basic instructions a pseudo-instruction becomes, in order, as MARS's
+templates: `lw $t1,100000` gives `["lui $1, VH2", "lw RG1,VL2($1)"]`, and a basic instruction gives
+`[]`. A template names the source operands by token position, where the operator is token 0 and
+parentheses count but commas do not: `RG2` is the register in token 2, `VL2` and `VH2` the low and
+high 16 bits of the value in token 2, `LL2` and `LH2` those of a label's address, `LAB` the label
+itself, and `$1` is `$at`. The header of `PseudoOps.java` lists every placeholder.
+`compactExpansion` holds the shorter templates MARS uses instead under its compact memory
+configurations, where every address is below 0x8000 (`lw $t1,label` gives `["lw RG1, LL2($0)"]`),
+and is empty for a form that has none. This library always runs the default memory configuration,
+with delayed branching off, so programs assemble with `expansion`.
+
 ### `JsMips` Interface
 
 #### Methods
@@ -425,6 +444,7 @@ including file, and includes beginning with `/` resolve from the virtual root.
 *   `MIPSSourceSet`: Read-only mapping from canonical source paths to source text.
 *   `MipsTokenizedLine`: A tokenized line with its original and processed source text and source location.
 *   `JsProgramStatement`: Interface representing a statement in the assembled program.
+*   `JsInstruction`: One instruction form from `MIPS.getInstructionSet()`.
 *   `JsBackStep`: Interface representing a back step in the simulation.
 *   `HandlerName`: Type representing the name of a handler function.
 *   `StopReason`: Enum of the reasons a run call stops.

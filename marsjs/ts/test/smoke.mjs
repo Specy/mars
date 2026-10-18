@@ -125,6 +125,30 @@ assert.equal(mips.getRegisterValue('$t1'), 11)
 assert.ok(mips.getUndoStack().length > 0, 'undo stack should record executed steps')
 assert.ok(MIPS.getInstructionSet().length > 0, 'instruction set should not be empty')
 
+// Basic and pseudo forms share mnemonics, so `isPseudo` is per form.
+const instructionForms = name => MIPS.getInstructionSet().filter(instruction => instruction.name === name)
+assert.ok(MIPS.getInstructionSet().every(instruction => typeof instruction.isPseudo === 'boolean'), 'every form says whether it is a pseudo-instruction')
+const lwForms = instructionForms('lw')
+assert.equal(lwForms.find(form => form.example === 'lw $t1,-100($t2)')?.isPseudo, false, 'lw with an offset and a base register is basic')
+assert.equal(lwForms.find(form => form.example === 'lw $t1,label')?.isPseudo, true, 'lw from a label is a pseudo-instruction')
+assert.ok(instructionForms('add').some(form => !form.isPseudo), 'add has a basic form')
+assert.ok(instructionForms('add').some(form => form.isPseudo), 'add with an immediate is a pseudo-instruction')
+assert.ok(instructionForms('li').length > 0 && instructionForms('li').every(form => form.isPseudo), 'li is only a pseudo-instruction')
+
+// `expansion` is the pseudo-instruction's templates, placeholders left in; a basic form has none.
+for (const form of MIPS.getInstructionSet()) {
+    assert.ok(Array.isArray(form.expansion) && Array.isArray(form.compactExpansion), `${form.example}: the expansions are arrays`)
+    assert.equal(form.expansion.length > 0, form.isPseudo, `${form.example}: only a pseudo-instruction has an expansion`)
+    assert.ok(form.isPseudo || form.compactExpansion.length === 0, `${form.example}: a basic form has no compact expansion`)
+    assert.ok(form.expansion.every(template => template === template.trim() && template.length > 0), `${form.example}: templates are trimmed`)
+}
+assert.deepEqual(lwForms.find(form => form.example === 'lw $t1,100000')?.expansion, ['lui $1, VH2', 'lw RG1,VL2($1)'], 'lw of a 32 bit address is lui then lw')
+assert.deepEqual(lwForms.find(form => form.example === 'lw $t1,-100($t2)')?.expansion, [], 'basic lw has no expansion')
+const lwLabel = lwForms.find(form => form.example === 'lw $t1,label')
+assert.deepEqual(lwLabel?.expansion, ['lui $1, LH2', 'lw RG1, LL2($1)'], 'lw of a label is lui then lw')
+assert.deepEqual(lwLabel?.compactExpansion, ['lw RG1, LL2($0)'], 'lw of a label in 16 bit addresses is one lw')
+assert.deepEqual(lwForms.find(form => form.example === 'lw $t1,100000')?.compactExpansion, [], 'lw of a 32 bit address has no compact expansion')
+
 // Multi-file construction: one immutable virtual source tree, rooted at the entry file.
 const projectFiles = {
     'src/main.asm': [

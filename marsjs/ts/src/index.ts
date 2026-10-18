@@ -287,6 +287,21 @@ export type JsInstruction = {
     example: string;
     description: string;
     tokens: JsInstructionToken[];
+    /** Whether this form is a pseudo-instruction: `lw $t1, label` is one, `lw $t1, -100($t2)` is not. */
+    isPseudo: boolean;
+    /**
+     * The basic instructions the assembler expands this pseudo-instruction into, in order, as
+     * templates with MARS's placeholders left in: `lw $t1,100000` gives `lui $1, VH2` and
+     * `lw RG1,VL2($1)`. Empty for a basic instruction.
+     */
+    expansion: string[];
+    /**
+     * The shorter templates MARS uses instead of `expansion` under its compact memory
+     * configurations, where every address is below 0x8000: `lw $t1,label` gives `lw RG1, LL2($0)`.
+     * Empty when the form has none. This Core always runs the default memory configuration, so it
+     * assembles `expansion`.
+     */
+    compactExpansion: string[];
 }
 
 export type MipsTokenizedLine = {
