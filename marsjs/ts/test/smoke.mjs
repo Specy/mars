@@ -12,7 +12,7 @@ if (!existsSync(fileURLToPath(dist))) {
 }
 
 const packageExports = await import(dist)
-const { BackStepAction, MIPS, MIPS_COPROCESSOR0_REGISTER_NUMBERS, StopReason, makeMipsFromFiles, registerHandlers, unimplementedHandler } = packageExports
+const { BackStepAction, MIPS, coreBackend, MIPS_COPROCESSOR0_REGISTER_NUMBERS, StopReason, makeMipsFromFiles, registerHandlers, unimplementedHandler } = packageExports
 
 const makeSingleFileMips = source => makeMipsFromFiles({ 'main.asm': source }, 'main.asm')
 
@@ -603,10 +603,14 @@ assert.throws(() => fpu.setCoprocessor1Value(32, 0), /FPU register index/)
 assert.throws(() => fpu.setCoprocessor1Value(-1, 0), /FPU register index/)
 assert.throws(() => fpu.setCoprocessor0Value(9, 0), /8, 12, 13 or 14/)
 assert.throws(() => fpu.setConditionFlag(8, true), /Condition flag/)
-// A fractional index is not an index: TeaVM hands the JS number through untouched, so the range
-// check rejects it rather than letting the array access fail with a raw TypeError.
-assert.throws(() => fpu.setCoprocessor1Value(1.7, 0), /FPU register index/)
-assert.throws(() => fpu.setCoprocessor1Value(Number.NaN, 0), /FPU register index/)
+// A fractional index is not an index: the JavaScript build hands the JS number through untouched, so
+// the range check rejects it rather than letting the array access fail with a raw TypeError. The
+// WebAssembly build converts an int parameter at the boundary (1.7 becomes 1, NaN becomes 0), so the
+// value is a valid index by the time Java sees it.
+if (coreBackend() === 'javascript') {
+    assert.throws(() => fpu.setCoprocessor1Value(1.7, 0), /FPU register index/)
+    assert.throws(() => fpu.setCoprocessor1Value(Number.NaN, 0), /FPU register index/)
+}
 
 // MARS holds the register files statically, so the next program's initialize() clears them:
 // remember the flags now, while they still belong to this run.
