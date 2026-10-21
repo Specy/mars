@@ -484,7 +484,7 @@ public class Memory extends Observable {
                Exceptions.ADDRESS_EXCEPTION_STORE, address);
       } else {
          // falls outside Mars addressing range
-         throw new AddressErrorException("address out of range ",
+         throw outOfRange("address out of range ",
                Exceptions.ADDRESS_EXCEPTION_STORE, address);
       }
       notifyAnyObservers(AccessNotice.WRITE, address, length, value);
@@ -574,7 +574,7 @@ public class Memory extends Observable {
                Exceptions.ADDRESS_EXCEPTION_STORE, address);
       } else {
          // falls outside Mars addressing range
-         throw new AddressErrorException("store address out of range ",
+         throw outOfRange("store address out of range ",
                Exceptions.ADDRESS_EXCEPTION_STORE, address);
       }
       return oldValue;
@@ -753,7 +753,7 @@ public class Memory extends Observable {
                Exceptions.ADDRESS_EXCEPTION_LOAD, address);
       } else {
          // falls outside Mars addressing range
-         throw new AddressErrorException("address out of range ",
+         throw outOfRange("address out of range ",
                Exceptions.ADDRESS_EXCEPTION_LOAD, address);
       }
       if (notify)
@@ -819,7 +819,7 @@ public class Memory extends Observable {
                Exceptions.ADDRESS_EXCEPTION_LOAD, address);
       } else {
          // falls outside Mars addressing range
-         throw new AddressErrorException("address out of range ",
+         throw outOfRange("address out of range ",
                Exceptions.ADDRESS_EXCEPTION_LOAD, address);
       }
       notifyAnyObservers(AccessNotice.READ, address, Memory.WORD_LENGTH_BYTES, value);
@@ -879,7 +879,7 @@ public class Memory extends Observable {
          value = fetchWordOrNullFromTable(kernelDataBlockTable, relative);
       } else {
          // falls outside Mars addressing range
-         throw new AddressErrorException("address out of range ", Exceptions.ADDRESS_EXCEPTION_LOAD, address);
+         throw outOfRange("address out of range ", Exceptions.ADDRESS_EXCEPTION_LOAD, address);
       }
       // Do not notify observers. This read operation is initiated by the
       // dump feature, not the executing MIPS program.
@@ -1168,6 +1168,25 @@ public class Memory extends Observable {
             address -= (4 - (address % WORD_LENGTH_BYTES));
       }
       return address;
+   }
+
+   /**
+    * The error for an access outside every segment. When the stack pointer has already gone below
+    * the stack's limit, as deep recursion or a local array larger than the stack takes it, the
+    * access is the stack overflowing and the error says so; otherwise the address is out of range.
+    * The exception type stays the access fault either way.
+    */
+   private static AddressErrorException outOfRange(String message, int type, int address) {
+      int stackPointer = RegisterFile.getValue(RegisterFile.STACK_POINTER_REGISTER);
+      if (Integer.compareUnsigned(stackPointer, stackLimitAddress) <= 0
+            && Integer.compareUnsigned(address, stackBaseAddress) <= 0) {
+         long size = Integer.toUnsignedLong(stackBaseAddress) - Integer.toUnsignedLong(stackLimitAddress);
+         String amount = size % (1 << 20) == 0 ? (size >> 20) + " MiB"
+               : size % 1024 == 0 ? (size >> 10) + " KiB" : size + " bytes";
+         return new AddressErrorException("stack overflow: the program needs more than its "
+               + amount + " of stack, at", type, address);
+      }
+      return new AddressErrorException(message, type, address);
    }
 
    /**
