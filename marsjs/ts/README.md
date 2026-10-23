@@ -178,7 +178,8 @@ mipsSimulator.registerHandler("stdIn", async (length) => {
 | `confirm` | 50 | message | `ConfirmResult` |
 | `inputDialog` | 51 to 54 | message | the text entered, or `null` |
 | `outputDialog` | 55 to 59 | message, `DialogType` | nothing |
-| `sleep` | 32 | milliseconds | nothing |
+| `sleep` | 32, and 33 after `midiOut` | milliseconds | nothing |
+| `midiOut` | 31 and 33 | pitch, milliseconds, instrument, volume | nothing |
 | `time` | 30 | nothing | milliseconds |
 | `randomSeed` (optional) | 41 to 44, a generator's first use | the generator's number | a seed from 0 to 2^48 - 1 |
 
@@ -186,6 +187,12 @@ Program time is a handler too, so a run can be given a clock of its own: `sleep`
 and `time` answers syscall 30. A live run resolves `sleep` on a timer and returns `Date.now()` from
 `time`; a scripted run can settle `sleep` immediately, advance a virtual clock by the requested
 milliseconds and return that clock instead, which keeps elapsed-time output reproducible.
+
+MIDI out (31) and MIDI out synchronous (33) play a tone through `midiOut`. As in MARS, the syscall
+puts a pitch, instrument or volume outside 0 to 127 back to 60, 0 and 100 and a negative duration
+back to 1000, so the handler only receives values in range. It starts the tone and returns without
+waiting for it to end, or returns a promise to hold the program until it settles. Syscall 33 then
+calls `sleep` for the same duration, so 33 waits as a sleep does, on a timer or on a virtual clock.
 
 ## Text
 
@@ -393,6 +400,16 @@ One difference: the WebAssembly build converts a number passed for an `int` para
 so a fractional or `NaN` register index is truncated instead of rejected.
 
 `npm run test:wasm` runs the whole test suite on the WebAssembly build.
+
+## Migrating to 5.0.0
+
+5.0.0 plays MIDI out (31) and MIDI out synchronous (33) through the new `midiOut` handler. Like
+every handler but `randomSeed` it is required, so every host now registers it; one without sound
+can ignore the tone:
+
+```typescript
+mipsSimulator.registerHandler("midiOut", () => {});
+```
 
 ## API
 

@@ -65,7 +65,8 @@ main:
 const HANDLER_NAMES = [
     'openFile', 'closeFile', 'writeFile', 'readFile', 'confirm', 'inputDialog',
     'outputDialog', 'readDouble', 'readFloat', 'readInt', 'readString', 'readChar',
-    'printString', 'sleep', 'time', 'stdIn', 'seekFile', 'stdOut', 'stdErr', 'randomSeed',
+    'printString', 'sleep', 'midiOut', 'time', 'stdIn', 'seekFile', 'stdOut', 'stdErr',
+    'randomSeed',
 ]
 
 const warningProgram = makeSingleFileMips(WARNINGS_ONLY_SOURCE)

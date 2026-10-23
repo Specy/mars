@@ -28,7 +28,7 @@ dispatch:
 syscall
 jr $ra
 `
-const faultSource = text(`li $v0, 31
+const faultSource = text(`li $v0, 99
 syscall`)
 const randomSource = text(`li $a0, 0
 li $v0, 41
