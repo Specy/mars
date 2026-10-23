@@ -143,6 +143,29 @@ public class Simulator extends Observable {
     }
 
     /**
+     * Every instruction any run has begun, the one that exited or failed included, never rewound:
+     * a host takes the difference across one run call to know how many it executed. A double for
+     * the reason BackStepper counts in doubles, and exact as far.
+     */
+    private double instructionsRun;
+
+    public double getInstructionsRun() {
+        return instructionsRun;
+    }
+
+    /**
+     * Ends the run in flight after the instruction it is executing, with {@link Reason#PAUSE}; a
+     * breakpoint on the next instruction is reported instead, and so is the end of the program
+     * when there is no next instruction. The host only runs while a run is in flight inside an IO
+     * handler, so that is where this is called from. Without a run in flight it does nothing.
+     */
+    public void pauseExecution() {
+        if (simulatorThread != null) {
+            simulatorThread.setStop();
+        }
+    }
+
+    /**
      * Whether there is no statement at {@code address}, so that a program whose counter reaches it
      * has run off the end. An address that cannot be fetched at all is not that: running it
      * reports the bad program counter as an exception.
@@ -425,6 +448,7 @@ public class Simulator extends Observable {
                     } finally {
                         app.specy.mars.assembler.MemoryLayoutFacts.refreshStack(RegisterFile.getValue(29));
                         backStepper.endInstruction();
+                        instructionsRun++;
                     }
                 } // end synchronized block
 
@@ -436,21 +460,28 @@ public class Simulator extends Observable {
                     DelayedBranch.trigger();
                 } //////////////////////////////////////////////////////////////////////
 
-                // Volatile variable initialized false but can be set true by the main thread.
-                // Used to stop or pause a running MIPS program. See stopSimulation() above.
-                if (stop == true) {
-                    this.constructReturnReason = Reason.PAUSE;
-                    this.done = false;
-                    Simulator.getInstance().notifyObserversOfExecutionStop(maxSteps, pc);
-                    return new Boolean(done);
-                }
-                // Return if we've reached a breakpoint.
+                // Return if we've reached a breakpoint. Checked before a pause, as RARS does: the
+                // next run call executes its first instruction unchecked, so a pause reported here
+                // would let the run that resumes from it walk straight through this breakpoint.
                 if ((breakPoints != null) &&
                         (Arrays.binarySearch(breakPoints, RegisterFile.getProgramCounter()) >= 0)) {
                     this.constructReturnReason = Reason.BREAKPOINT;
                     this.done = false;
                     Simulator.getInstance().notifyObserversOfExecutionStop(maxSteps, pc);
                     return new Boolean(done); // false;
+                }
+                // Volatile variable initialized false but can be set true by the main thread.
+                // Used to stop or pause a running MIPS program. See pauseExecution() above.
+                if (stop == true) {
+                    // As for the instruction limit below: a pause after the program's last
+                    // instruction is the end of the program, which the call that ran it reports.
+                    if (noStatementAt(RegisterFile.getProgramCounter())) {
+                        return dropOffBottom(maxSteps, pc);
+                    }
+                    this.constructReturnReason = Reason.PAUSE;
+                    this.done = false;
+                    Simulator.getInstance().notifyObserversOfExecutionStop(maxSteps, pc);
+                    return new Boolean(done);
                 }
                 // Check number of MIPS instructions executed. Return if at limit (-1 is no
                 // limit).

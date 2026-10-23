@@ -143,6 +143,7 @@ public class MIPS {
         assemblyAttempted = true;
         assembled = false;
         stopReason = null;
+        lastRunInstructionCount = 0;
         Globals.program = null;
         Globals.symbolTable.clear();
         Globals.memory.clear();
@@ -172,6 +173,7 @@ public class MIPS {
         ProgramExit.reset();
         RandomStreams.reset();
         stopReason = null;
+        lastRunInstructionCount = 0;
     }
 
     public StackFrame[] getCallStack(){
@@ -212,19 +214,35 @@ public class MIPS {
 
     private Simulator.Reason run(Run body) throws ProcessingException {
         requireAssembled();
+        lastRunInstructionCount = 0;
         if (ProgramExit.hasExited()) {
             // An exit ends the program: what follows the syscall is not run, as MARS does not
             // resume a program that has finished. Undo or initialize starts it again.
             stopReason = Simulator.Reason.NORMAL_TERMINATION;
             return stopReason;
         }
+        double before = Simulator.getInstance().getInstructionsRun();
         try {
             stopReason = body.run();
         } catch (ProcessingException failure) {
             stopReason = Simulator.Reason.EXCEPTION;
             throw failure;
+        } finally {
+            lastRunInstructionCount = Simulator.getInstance().getInstructionsRun() - before;
         }
         return stopReason;
+    }
+
+    /** How many instructions the last run call executed, see {@link Simulator#getInstructionsRun()}. */
+    private double lastRunInstructionCount = 0;
+
+    public double getLastRunInstructionCount() {
+        return lastRunInstructionCount;
+    }
+
+    /** Ends the run call in flight after its current instruction, see {@link Simulator#pauseExecution()}. */
+    public void pause() {
+        Simulator.getInstance().pauseExecution();
     }
 
     /**
