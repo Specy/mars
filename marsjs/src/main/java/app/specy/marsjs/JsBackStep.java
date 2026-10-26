@@ -18,19 +18,23 @@ public final class JsBackStep {
 
     static JSObject of(BackStepper.BackStep backStep) {
         return create(backStep.getAction(), backStep.getPc(), backStep.getParam1(),
-                backStep.getParam2(), backStep.getParam3(), backStep.isPoke(), Long.toString(backStep.getSerial()));
+                Integer.toString(backStep.getOldValue()), Integer.toString(backStep.getNewValue()),
+                backStep.isPoke(), Long.toString(backStep.getSerial()));
     }
 
     /*
      * `isPoke` is the discriminator this stack needs: a poke entry keeps pc == -1, which a host
      * write made before anything ran also has, so the pc alone cannot tell the two apart.
      *
-     * `newValue` is the other half of what the step restores: the value the write put there, taken
-     * by the setter at the moment of the write, beside the `param2` it replaced. It is a signed 32
-     * bit int like `param2`; a host that wants the unsigned form takes `newValue >>> 0`.
+     * `oldValue` and `newValue` are the two sides of the write, taken by the setter at the moment
+     * of the write. They cross as signed decimal strings, the shape @specy/risc-v reports its 64 bit
+     * values in, so that one reading serves the back steps of both. `param1` crosses unsigned, so
+     * an address at or above 0x80000000 (the memory-mapped devices, kernel data) reads as the
+     * address it is; a register number or an index is never negative and reads as before.
      */
-    @JSBody(params = { "action", "pc", "param1", "param2", "newValue", "isPoke", "serial" },
-            script = "return { action: action, pc: pc, param1: param1, param2: param2, newValue: newValue, isPoke: isPoke, serial: serial };")
-    private static native JSObject create(int action, int pc, int param1, int param2, int newValue,
-            boolean isPoke, String serial);
+    @JSBody(params = { "action", "pc", "param1", "oldValue", "newValue", "isPoke", "serial" },
+            script = "return { action: action, pc: pc, param1: param1 >>> 0, oldValue: oldValue,"
+                    + " newValue: newValue, isPoke: isPoke, serial: serial };")
+    private static native JSObject create(int action, int pc, int param1, String oldValue,
+            String newValue, boolean isPoke, String serial);
 }

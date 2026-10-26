@@ -585,9 +585,9 @@ public class JsMips {
      * which is what tells a poke apart from a host write made before anything ran, since both carry
      * pc -1. Use getUndoGroups() to read the history the way undo() pops it.
      *
-     * Every element reports both sides of the write it undoes: the value the write replaced, in the
-     * param the action documents, and `newValue`, the value it left, taken by the setter at the
-     * moment of the write.
+     * Every element reports both sides of the write it undoes, `oldValue`, the value the write
+     * replaced, and `newValue`, the value it left, taken by the setter at the moment of the write,
+     * as signed decimal strings; `param1` is unsigned.
      */
     @JSExport
     public JSArray<JSObject> getUndoStack() {

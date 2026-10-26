@@ -95,13 +95,13 @@ mipsSimulator.registerHandler("readInt", async () => {
     return await promptUserForALine(); // the syscall parses the line itself
 });
 
-// Accessing the undo stack. Every step reports both sides of the write it undoes: `param2` is
+// Accessing the undo stack. Every step reports both sides of the write it undoes: `oldValue` is
 // the value the write replaced and `newValue` the value it left, both as the simulator saw them
-// at the moment of the write.
+// at the moment of the write, as signed decimal strings.
 const undoStack = mipsSimulator.getUndoStack();
 undoStack.forEach(step => {
     if (step.action === BackStepAction.REGISTER_RESTORE) {
-        console.log(`Register ${step.param1} went from ${step.param2} to ${step.newValue} at PC ${step.pc}`);
+        console.log(`Register ${step.param1} went from ${step.oldValue} to ${step.newValue} at PC ${step.pc}`);
     }
 });
 
@@ -363,7 +363,7 @@ including file, and includes beginning with `/` resolve from the virtual root.
 *   `getStackPointer(): number`: Returns the current value of the stack pointer.
 *   `getProgramCounter(): number`: Returns the current value of the program counter.
 *   `getRegistersValues(): number[]`: Returns an array of all register values.
-*   `getUndoStack(): JsBackStep[]`: Returns the undo stack, which contains information about previous simulation steps. Each step reports the value the write replaced (`param2`) beside the value it wrote (`newValue`).
+*   `getUndoStack(): JsBackStep[]`: Returns the undo stack, which contains information about previous simulation steps. Each step reports the value the write replaced (`oldValue`) beside the value it wrote (`newValue`), as signed decimal strings, and an address in `param1` unsigned.
 *   `readMemoryBytes(address: number, length: number): number[]`: Reads `length` bytes from memory starting at `address`.
 *   `setMemoryBytes(address: number, bytes: number[]): void`: Writes `bytes` to memory starting at `address`.
 *   `getTokenizedLines(): MipsTokenizedLine[]`: Returns the flattened tokenized lines with their original source paths and one-based line numbers.

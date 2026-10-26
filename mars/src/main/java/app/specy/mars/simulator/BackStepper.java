@@ -590,7 +590,7 @@ public class BackStepper {
         // by the setter that made the write, never reconstructed afterwards. Zero for the actions
         // that restore no value: the condition flag set and clear, DO_NOTHING, and a poke entry,
         // whose own writes carry both sides already. A random generator's restore keeps the low
-        // half of its state here, which getParam3() does not report.
+        // half of its state here, which getNewValue() does not report.
         private int param3;
         private boolean inDelaySlot; // true if instruction executed in "delay slot" (delayed branching enabled)
         private int pokeGroup; // the poke transaction this step is, or 0 for an instruction's step
@@ -638,12 +638,21 @@ public class BackStepper {
         }
 
         /**
+         * The value this step puts back: {@link #getParam2()} for every action that carries one,
+         * except PC_RESTORE, which has always kept the address it puts back in param1 and left
+         * param2 at 0.
+         */
+        public int getOldValue() {
+            return action == PC_RESTORE ? param1 : getParam2();
+        }
+
+        /**
          * The value this write left behind, as the simulator saw it at the moment of the write:
          * the whole register for a register restore, the bytes at the address for a memory
          * restore, at the width the write was made, and the address the instruction set for a PC
          * restore. 0 for an action that restores no value.
          */
-        public int getParam3() {
+        public int getNewValue() {
             return action == RANDOM_STREAM_RESTORE ? 0 : param3;
         }
 

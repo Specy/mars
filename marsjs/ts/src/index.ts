@@ -534,13 +534,13 @@ export enum BackStepAction {
     /**
      * An exit service (10 or 17): undoing it leaves the program running on the syscall again.
      * `param1` is 1 if the program had already exited (never, as nothing runs after an exit),
-     * `param2` the exit code it replaced and `newValue` the code the exit set.
+     * `oldValue` the exit code it replaced and `newValue` the code the exit set.
      */
     EXIT_RESTORE,
     /**
      * A random service (40 to 44) advanced or reseeded generator `param1`: undoing it puts the
      * generator back, so that stepping the service again draws the same number. The generator's
-     * state is the simulator's own, so `param2` and `newValue` are 0.
+     * state is the simulator's own, so `oldValue` and `newValue` are `'0'`.
      */
     RANDOM_STREAM_RESTORE,
     /** Internal heap and stack extent restores; no displayed mutation. */
@@ -560,35 +560,43 @@ export interface JsBackStep {
     readonly action: BackStepAction;
 
     /**
-     * Information about the action
+     * What the action restores into: the address of a memory restore, the register number of a
+     * register restore (33 and 34 are `hi` and `lo`; coprocessor 0 by its MIPS number), the
+     * address `PC_RESTORE` puts back, the flag of a condition restore, the generator of
+     * `RANDOM_STREAM_RESTORE`, whether the program had exited for `EXIT_RESTORE`, and the heap
+     * break or stack top `HEAP_RESTORE` and `STACK_TOP_RESTORE` put back. Unsigned, so an address
+     * at or above `0x80000000` (the memory-mapped devices, kernel data) reads as the address it is.
      */
     readonly param1: number;
 
     /**
-     * Information about the action
-     */
-    readonly param2: number;
-
-    /**
-     * The other half of what this step restores: the value the write left, as the simulator saw it
-     * at the moment of the write, beside the `param2` it replaced.
+     * The value this step puts back, as the simulator saw it at the write: a **signed decimal
+     * string**, the shape `@specy/risc-v` reports its 64 bit values in, so that one reading serves
+     * the back steps of both; read it with `BigInt(step.oldValue)`, and with
+     * `BigInt.asUintN(32, BigInt(step.oldValue))` for the unsigned form.
      *
      * - `REGISTER_RESTORE`, `COPROC0_REGISTER_RESTORE` and `COPROC1_REGISTER_RESTORE`: the whole
-     *   value the write put in the register.
-     * - `MEMORY_RESTORE_RAW_WORD` and `MEMORY_RESTORE_WORD`: the word left at the address.
-     *   `MEMORY_RESTORE_HALF` and `MEMORY_RESTORE_BYTE`: the half or byte left there, in the low
+     *   register before the write.
+     * - `MEMORY_RESTORE_RAW_WORD` and `MEMORY_RESTORE_WORD`: the word the store replaced.
+     *   `MEMORY_RESTORE_HALF` and `MEMORY_RESTORE_BYTE`: the half or byte it replaced, in the low
      *   order bits, so that both values are read at the width the write was made.
-     * - `PC_RESTORE`: the address the instruction set the program counter to, while `param1` is
-     *   the address the restore puts back (`param2` is unused there, as it has always been).
-     * - `EXIT_RESTORE`: the exit code the exit set.
-     * - 0 for the actions that restore no value: `COPROC1_CONDITION_SET`, `COPROC1_CONDITION_CLEAR`,
-     *   `DO_NOTHING` and `POKE`, whose own `writes` already carry both sides of every value, and
-     *   `RANDOM_STREAM_RESTORE`, whose generator state is the simulator's own.
-     *
-     * A signed 32 bit int like `param2`, the way every register getter of this package reports a
-     * value; read it unsigned with `newValue >>> 0`.
+     * - `PC_RESTORE`: the address the restore puts back, the same as `param1`.
+     * - `EXIT_RESTORE`: the exit code the exit replaced.
+     * - `HEAP_RESTORE` and `STACK_TOP_RESTORE`: `'0'`, their value being `param1`.
+     * - `'0'` for the actions that restore no value: `COPROC1_CONDITION_SET`,
+     *   `COPROC1_CONDITION_CLEAR`, `DO_NOTHING` and `POKE`, whose own `writes` already carry both
+     *   sides of every value, and `RANDOM_STREAM_RESTORE`, whose generator state is the simulator's
+     *   own.
      */
-    readonly newValue: number;
+    readonly oldValue: string;
+
+    /**
+     * The value the write left, beside the `oldValue` it replaced, taken at the store: a register
+     * write reports the whole register after it, a memory write the bytes it left at the width it
+     * was made, `PC_RESTORE` the address the instruction set and `EXIT_RESTORE` the exit code the
+     * exit set. Same encoding as `oldValue`, and `'0'` where that is.
+     */
+    readonly newValue: string;
     /**
      * The program counter value before the action, or -1 for an action that belongs to no
      * instruction: a Poke, or a host write made before anything ran.

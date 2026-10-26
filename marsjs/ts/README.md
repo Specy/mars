@@ -462,7 +462,7 @@ with delayed branching off, so programs assemble with `expansion`.
 *   `getStackPointer(): number`: Returns the current value of the stack pointer.
 *   `getProgramCounter(): number`: Returns the current value of the program counter.
 *   `getRegistersValues(): number[]`: Returns an array of all register values.
-*   `getUndoStack(): JsBackStep[]`: Returns the undo stack, which contains information about previous simulation steps.
+*   `getUndoStack(): JsBackStep[]`: Returns the undo stack, which contains information about previous simulation steps. Each step reports the value the write replaced (`oldValue`) beside the value it wrote (`newValue`), as signed decimal strings, and an address in `param1` unsigned.
 *   `readMemoryBytes(address: number, length: number): number[]`: Reads `length` bytes from memory starting at `address`. Notifies no memory observer: inspecting memory from the host is not the program reading it. Text reads as the encodings of the statements it holds, in the current byte order, and as zero where no statement is; the program's own loads from text still fault unless self-modifying code is enabled.
 *   `setMemoryBytes(address: number, bytes: number[]): void`: Writes `bytes` to memory starting at `address`, the way the program does: write observers are notified and, while undo is enabled, an undo step is recorded per byte.
 *   `setPeripheralWord(address: number, value: number): void`: Writes one word-aligned word as a peripheral would, notifying no observer and recording no undo step. See [memory observers](#memory-observers).
