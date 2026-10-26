@@ -452,6 +452,7 @@ with delayed branching off, so programs assemble with `expansion`.
 *   `simulateWithBreakpoints(breakpoints: number[]): Promise<StopReason>`: Simulates the program until a breakpoint is reached.  `breakpoints` is an array of memory addresses.
 *   `simulateWithBreakpointsAndLimit(breakpoints: number[], limit: number): Promise<StopReason>`: Simulates the program until a breakpoint is reached or the limit is reached.
 *   `getStopReason(): StopReason`: Why the last run call stopped, `NONE` after `initialize`.
+*   `getInstructionsExecuted(): number`: How many instructions run calls have executed since the module loaded, the one that exited or failed included. It only grows, `undo()` included, and each of them is one entry of the undo history while it records, so the difference across a host's calls is how many entries they added.
 *   `getHeapStart(): number`: Where the heap, and so sbrk's first block, starts: 0x10040000, or the
     first page after static data in a `gnu-compiler-v1` program whose static data reaches past it.
     See [Memory layout](#memory-layout).
