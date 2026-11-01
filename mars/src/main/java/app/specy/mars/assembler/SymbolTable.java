@@ -80,6 +80,8 @@ public class SymbolTable {
                "label \"" + label + "\" already defined"));
       } else {
          Symbol s = new Symbol(label, address, b);
+         MIPSprogram origin = token.getOriginalProgram();
+         if (origin != null) s.setDefinition(origin.getFilename(), token.getOriginalSourceLine() - 1);
          table.add(s);
          byName.put(label, s);
          if (Globals.debug)

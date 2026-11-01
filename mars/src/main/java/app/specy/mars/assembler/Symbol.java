@@ -96,4 +96,23 @@ public class Symbol {
     this.address = newAddress;
     return;
   }
+
+  private String file;
+  private int line = -1;
+
+  /** Records where the label is defined: the source file and the 0-based line. */
+  public void setDefinition(String file, int line) {
+    this.file = file;
+    this.line = line;
+  }
+
+  /** The source file that defines the label, an included file's own path; null when unknown. */
+  public String getFile() {
+    return this.file;
+  }
+
+  /** The 0-based line of the label's definition in {@link #getFile()}, or -1 when unknown. */
+  public int getLine() {
+    return this.line;
+  }
 }

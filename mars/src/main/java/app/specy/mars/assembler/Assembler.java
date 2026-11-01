@@ -507,11 +507,13 @@ public class Assembler {
         }
         for (MIPSprogram program : tokenizedProgramFiles) for (Object entry : program.getLocalSymbolTable().getAllSymbols()) {
             Symbol symbol = (Symbol) entry;
-            MemoryLayoutFacts.symbol(symbol.getName(), symbol.getAddress(), symbol.getType(), false, program.getFilename());
+            MemoryLayoutFacts.symbol(symbol.getName(), symbol.getAddress(), symbol.getType(), false,
+                symbol.getFile() != null ? symbol.getFile() : program.getFilename(), symbol.getLine());
         }
         for (Object entry : Globals.symbolTable.getAllSymbols()) {
             Symbol symbol = (Symbol) entry;
-            MemoryLayoutFacts.symbol(symbol.getName(), symbol.getAddress(), symbol.getType(), false, tokenizedProgramFiles.get(0).getFilename());
+            MemoryLayoutFacts.symbol(symbol.getName(), symbol.getAddress(), symbol.getType(), false,
+                symbol.getFile() != null ? symbol.getFile() : tokenizedProgramFiles.get(0).getFilename(), symbol.getLine());
         }
         return this.machineList;
    } // assemble()
@@ -1185,6 +1187,9 @@ public class Assembler {
                fileCurrentlyBeingAssembled.getLocalSymbolTable().removeSymbol(label);
                Globals.symbolTable.addSymbol(label, symtabEntry.getAddress(),
                      symtabEntry.getType(), errors);
+               // where the label is defined, not where .globl names it
+               Globals.symbolTable.getSymbol(label.getValue()).setDefinition(symtabEntry.getFile(),
+                     symtabEntry.getLine());
             }
          }
       }

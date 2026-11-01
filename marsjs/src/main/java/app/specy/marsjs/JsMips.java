@@ -133,7 +133,10 @@ public class JsMips {
     @JSExport public String[] getSectionNames() { return app.specy.mars.assembler.MemoryLayoutFacts.sections(); }
     @JSExport public String[] getSymbolFiles() { return app.specy.mars.assembler.MemoryLayoutFacts.files(); }
     @JSExport public String[] getSymbolNames() { return app.specy.mars.assembler.MemoryLayoutFacts.names(); }
-    /** Symbol tuples: address, data flag, library owner flag. */
+    /**
+     * Symbol tuples: address, data flag, library owner flag, and the 0-based line of the label's
+     * definition in the file getSymbolFiles names, an included file's own, or -1 when unknown.
+     */
     @JSExport public int[] getSymbolValues() { return app.specy.mars.assembler.MemoryLayoutFacts.symbols(); }
     @JSExport public int getHeapBreak() { return app.specy.mars.mips.hardware.Memory.heapAddress; }
     @JSExport public int getStackTop() { return app.specy.mars.assembler.MemoryLayoutFacts.stackTop; }

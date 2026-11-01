@@ -386,6 +386,8 @@ public final class GnuAssembler {
             List<Unit> again = new ArrayList<>();
             for (Unit unit : units) {
                 Unit next = new Unit(unit.program, unit.index);
+                // a library member stays one when its far branches are relaxed
+                next.fromLibrary = unit.fromLibrary;
                 next.longBranches.addAll(unit.longBranches);
                 next.parseAll();
                 again.add(next);
@@ -699,7 +701,12 @@ public final class GnuAssembler {
                 if (value.number.signum() >= 0 && value.number.bitLength() <= 32) {
                     Token token = new Token(TokenTypes.IDENTIFIER, symbol.name, program, symbol.line, 1);
                     program.getLocalSymbolTable().addSymbol(token, value.number.intValue(), value.section != null && !value.section.executable(), errors);
-                    MemoryLayoutFacts.symbol(symbol.name, value.number.intValue(), value.section != null && !value.section.executable(), fromLibrary, program.getSourceLineList().get(symbol.line - 1).getSourcePath());
+                    // The names this assembler makes for itself, an anchor for each la or call it
+                    // expands, a numeric label's, a relaxed branch's, stay out of the program's labels.
+                    if (!symbol.name.startsWith("__gnu_")) {
+                        SourceLine source = program.getSourceLineList().get(symbol.line - 1);
+                        MemoryLayoutFacts.symbol(symbol.name, value.number.intValue(), value.section != null && !value.section.executable(), fromLibrary, source.getSourcePath(), source.getLineNumber() - 1);
+                    }
                 }
             });
             for (String name : declared) if (!weak.contains(name)) attempt(1, () -> resolve(name, 1, current, 0, false, new HashSet<>()));

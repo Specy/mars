@@ -51,9 +51,46 @@ console.log('memory layout, stack and heap Undo passed')
     for (const name of ['libraryData', 'localData', 'localRoom']) {
         const i = names.indexOf(name)
         assert(i >= 0, `${name} is exported even from a data-only library`)
-        assert.equal(values[i * 3 + 2], 1, `${name} belongs to the library`)
+        assert.equal(values[i * 4 + 2], 1, `${name} belongs to the library`)
     }
     const user = names.indexOf('userData')
-    assert.equal(values[user * 3 + 2], 0)
+    assert.equal(values[user * 4 + 2], 0)
     assert.equal(files[user], 'generated.s', 'symbols preserve their included source file')
 }
+
+{
+    // Where each label is defined: in an included file at its own line, a global where it is
+    // defined rather than where .globl names it.
+    const core = MIPS.makeMipsFromFiles({
+        'main.s': '.globl main\n.include "data.s"\n.text\nmain:\nla $a0, hello\n',
+        'data.s': '.data\n# greeting\nhello: .asciiz "hi"\n'
+    }, 'main.s')
+    const result = core.assemble()
+    assert.equal(result.hasErrors, false, result.errors.map(e => `${e.sourcePath}:${e.sourceLine} ${e.message}`).join('\n'))
+    const names = core.getSymbolNames(), files = core.getSymbolFiles(), values = core.getSymbolValues()
+    const at = name => { const i = names.indexOf(name); return [files[i], values[i * 4 + 3]] }
+    assert.deepEqual(at('hello'), ['data.s', 2])
+    assert.deepEqual(at('main'), ['main.s', 3])
+}
+{
+    // The GNU profile: lines through an include, none of the names the assembler makes for itself,
+    // and a library member whose far branch is relaxed is still the library's.
+    const core = MIPS.makeMipsFromFiles({
+        'main.s': '.include "generated.s"',
+        'generated.s': '.text\n.globl main\nmain:\nla $4, value\njal helper\nnop\njr $31\nnop\n.data\nvalue: .word 1\n'
+    }, 'main.s', {
+        assemblerProfile: 'gnu-compiler-v1', libraries: [{ members: {
+            '@runtime/far.s': '.text\n.globl helper\nhelper:\nbnez $4,far\nnop\n.p2align 18\nfar:\njr $31\nnop\n'
+        }, index: { helper: '@runtime/far.s' } }]
+    })
+    const result = core.assemble()
+    assert.equal(result.hasErrors, false, result.errors.map(e => `${e.sourcePath}:${e.sourceLine} ${e.message}`).join('\n'))
+    const names = core.getSymbolNames(), files = core.getSymbolFiles(), values = core.getSymbolValues()
+    const at = name => { const i = names.indexOf(name); return [files[i], values[i * 4 + 3], values[i * 4 + 2]] }
+    assert.deepEqual(names.filter(name => name.startsWith('__gnu_')), [])
+    assert.deepEqual(at('main'), ['generated.s', 2, 0])
+    assert.deepEqual(at('value'), ['generated.s', 9, 0])
+    assert.deepEqual(at('helper'), ['@runtime/far.s', 2, 1])
+    assert.deepEqual(at('far'), ['@runtime/far.s', 6, 1])
+}
+console.log('symbol files, lines and library ownership passed')

@@ -522,9 +522,12 @@ index into `getSectionNames()`, and byte alignment. Convert addresses to unsigne
 including the kept sections of loaded library members; zero-length items are omitted.
 
 `getSymbolNames()` and `getSymbolFiles()` are parallel string arrays.
-`getSymbolValues()` has three integers per name: address, data flag, library flag.
+`getSymbolValues()` has four integers per name: address, data flag, library flag, and
+the 0-based line of the label's definition in its file (`-1` when unknown).
 A library flag of `1` includes locals of data-only library members. The source file
-identifies an included file, rather than only its enclosing compilation unit.
+identifies an included file, rather than only its enclosing compilation unit, and a
+`.globl` label's line is its definition's. The names the GNU-profile assembler makes
+for itself (`__gnu_anchor_…`, `__gnu_numeric_…`, `__gnu_relax_…`) are not listed.
 
 After `initialize()`, `getHeapStart()` and `getHeapBreak()` bound the current heap.
 An allocation's previous break is recorded with its instruction, so Undo restores

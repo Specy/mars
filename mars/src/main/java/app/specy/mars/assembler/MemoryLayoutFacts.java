@@ -19,9 +19,10 @@ public final class MemoryLayoutFacts {
         if (index < 0) { index = sections.size(); sections.add(section); }
         items.add(new int[] { address, length, kind, index, alignment });
     }
-    public static void symbol(String name, int address, boolean data, boolean library, String file) {
+    /** A label, with the file that defines it and the 0-based line there, -1 when unknown. */
+    public static void symbol(String name, int address, boolean data, boolean library, String file, int line) {
         for (int i = 0; i < names.size(); i++) if (names.get(i).equals(name) && symbols.get(i)[0] == address) return;
-        names.add(name); files.add(file); symbols.add(new int[] { address, data ? 1 : 0, library ? 1 : 0 });
+        names.add(name); files.add(file); symbols.add(new int[] { address, data ? 1 : 0, library ? 1 : 0, line });
     }
     private static int[] flatten(List<int[]> values, int width) {
         int[] result = new int[values.size() * width];
@@ -32,7 +33,8 @@ public final class MemoryLayoutFacts {
     public static String[] sections() { return sections.toArray(new String[0]); }
     public static String[] files() { return files.toArray(new String[0]); }
     public static String[] names() { return names.toArray(new String[0]); }
-    public static int[] symbols() { return flatten(symbols, 3); }
+    /** Tuples of address, data flag, library flag and definition line. */
+    public static int[] symbols() { return flatten(symbols, 4); }
     public static void resetStack(int sp) { stackTop = previousSp = sp; }
     public static void refreshStack(int sp) {
         double current = sp < 0 ? sp + 4294967296.0 : sp;

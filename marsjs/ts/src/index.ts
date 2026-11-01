@@ -981,9 +981,17 @@ export interface JsMips {
     /** Tuples of address, length, kind (code=0/data=1/reserved=2), section index, alignment. */
     getLayoutItems(): Int32Array
     getSectionNames(): string[]
+    /** The file that defines each symbol of `getSymbolNames`, an included file's own path. */
     getSymbolFiles(): string[]
+    /**
+     * The program's labels and its library's, without the names the GNU assembler makes for
+     * itself (`__gnu_anchor_…`, `__gnu_numeric_…`).
+     */
     getSymbolNames(): string[]
-    /** Tuples of address, data flag, library owner flag. */
+    /**
+     * Tuples of address, data flag, library owner flag, and the 0-based line of the label's
+     * definition in its `getSymbolFiles` file, or -1 when unknown.
+     */
     getSymbolValues(): Int32Array
     getHeapBreak(): number
     getStackTop(): number
