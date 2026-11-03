@@ -21,6 +21,11 @@ import java.util.regex.*;
  * undefined weak reference is zero, and only the first unit's copy of a COMDAT group is kept.
  * This is not an ELF linker: there are no object files, relocation records or linker scripts.
  * <p>
+ * The program's other units form an archive, as a library's members do: the link takes one only
+ * when it defines a global the program still needs, searching it before the library, and a unit
+ * it takes stays the program's own code. A unit's parse is kept by its exact text (see
+ * {@link Preparation}), so a unit that has not changed since the last assembly is not parsed again.
+ * <p>
  * MARS runs with delayed branching off: a taken branch never executes the instruction after it,
  * and a link saves the address of that instruction. Code assembled with {@code .set noreorder}
  * must therefore hold a nop in every delay slot, which is what GCC writes with
@@ -60,8 +65,6 @@ public final class GnuAssembler {
     private static final Pattern ENTRY_SIZE = Pattern.compile("[1-9][0-9]*");
     /** Loads and stores whose second operand is an address, {@code offset(base)} or a bare expression. */
     private static final Pattern MEMORY_ACCESS = Pattern.compile("lb|lbu|lh|lhu|lw|lwl|lwr|ll|sb|sh|sw|swl|swr|sc|lwc1|ldc1|swc1|sdc1");
-    /** Basic instructions whose last operand is a PC-relative target, a 16-bit word offset from the delay slot. */
-    private static final Pattern BRANCH = Pattern.compile("beq|bne|bgez|bgezal|bgtz|blez|bltz|bltzal|bc1t|bc1f");
     /** Source operations followed by a delay slot. */
     private static final Pattern DELAYED = Pattern.compile("b|bal|beqz|bnez|beq|bne|bgez|bgezal|bgtz|blez|bltz|bltzal|bc1t|bc1f|j|jal|jr|jalr|bge|bgeu|bgt|bgtu|ble|bleu|blt|bltu");
     /** Template codes that need a constant, an address or the delayed branching setting at expansion. */
@@ -84,12 +87,39 @@ public final class GnuAssembler {
         INVERSE_BRANCH.put("bgezal", "bltz"); INVERSE_BRANCH.put("bltzal", "bgez");
         INVERSE_BRANCH.put("bc1t", "bc1f"); INVERSE_BRANCH.put("bc1f", "bc1t");
     }
+    /** Basic instructions whose last operand is a PC-relative target, a 16-bit word offset from the delay slot. */
+    private static final Set<String> BRANCHES = Set.of("beq", "bne", "bgez", "bgezal", "bgtz", "blez", "bltz", "bltzal", "bc1t", "bc1f");
+    /**
+     * The encodings of basic statements by their text, which the instruction set decides: most
+     * statements of a program are a few hundred texts, and a Build meets them again. Forgotten when
+     * it holds too many.
+     */
+    private static final Map<String, ProgramStatement.Encoding> ENCODINGS = new HashMap<>();
+    private static final int MAX_ENCODINGS = 1 << 16;
     private static final Pattern ARCHITECTURE = Pattern.compile("(?:arch=)?mips(?:0|1|2|32|32r2)");
     /** An operand or expression atom: a number, which is skipped, or a name; a leading % marks an address modifier. */
     private static final Pattern REFERENCE = Pattern.compile("0[xX][0-9a-fA-F]+|[0-9]+[bf]?|%?[.$A-Za-z_][.$A-Za-z_0-9]*");
 
     private final ErrorList errors = new ErrorList();
+    /** The units the link takes, in layout order: the program's own, then the library's members. */
     private final List<Unit> units = new ArrayList<>();
+    /** The entry units, which are always linked: the program and what it includes. */
+    private final List<MIPSprogram> programs;
+    /** Where the archive's units are read from, and their paths in archive order. */
+    private final MIPSFileSystem files;
+    private final List<String> archivePaths;
+    /** The archive's units the link has not taken, in archive order. */
+    private final List<Unit> archive = new ArrayList<>();
+    /** The archive's unit that defines each global: the first in archive order, as ld would find it. */
+    private final Map<String, Unit> archiveIndex = new HashMap<>();
+    private final Map<Unit, Integer> archiveOrder = new HashMap<>();
+    /** How many of {@link #units} are the program's own, which come before the library's members. */
+    private int ownUnits;
+    /** The entry units' programs and the archive's, for their source lines and tokens. */
+    private final List<MIPSprogram> unitPrograms = new ArrayList<>();
+    /** The Files whose units this assembly parsed from their text rather than took from the cache. */
+    private final Set<String> assembled = new LinkedHashSet<>();
+    private int nextUnit;
     /** The definition every unit sees for a global name: strong, or else the first weak one. */
     private final Map<String, Symbol> globals = new LinkedHashMap<>();
     private final List<Fragment> textGaps = new ArrayList<>();
@@ -174,6 +204,65 @@ public final class GnuAssembler {
         Invalid(String message) { super(message); }
     }
 
+    /**
+     * A unit's parse as the cache keeps it: its sections, fragments and symbols as plain values, so
+     * that it refers to no program, layout or assembler, and every assembly that uses it makes its
+     * own unit of it. What the unit defines and refers to comes along, worked out.
+     */
+    private static final class Parse {
+        final SectionData[] sections;
+        final SymbolData[] symbols, forwardAliases;
+        final Map<String, SymbolData[]> numeric;
+        final List<String> declared, weak;
+        final int current;
+        final Set<String> defined, strong, weakly;
+        Parse(SectionData[] sections, SymbolData[] symbols, SymbolData[] forwardAliases, Map<String, SymbolData[]> numeric,
+              List<String> declared, List<String> weak, int current, Set<String> defined, Set<String> strong, Set<String> weakly) {
+            this.sections = sections; this.symbols = symbols; this.forwardAliases = forwardAliases; this.numeric = numeric;
+            this.declared = declared; this.weak = weak; this.current = current;
+            this.defined = defined; this.strong = strong; this.weakly = weakly;
+        }
+    }
+    private static final class SectionData {
+        final String key, name, flags, type, entrySize, group;
+        final int family, size, alignment, priority;
+        final int[] lines, offsets, sizes, widths, fills;
+        final String[] instructions;
+        final List<String>[] expressions;
+        final byte[][] bytes;
+        @SuppressWarnings("unchecked")
+        SectionData(String key, Section section) {
+            this.key = key; name = section.name; flags = section.flags; type = section.type; entrySize = section.entrySize;
+            group = section.group; family = section.family; size = section.size; alignment = section.alignment; priority = section.priority;
+            int count = section.fragments.size();
+            lines = new int[count]; offsets = new int[count]; sizes = new int[count]; widths = new int[count]; fills = new int[count];
+            instructions = new String[count]; expressions = new List[count]; bytes = new byte[count][];
+            for (int i = 0; i < count; i++) {
+                Fragment fragment = section.fragments.get(i);
+                lines[i] = fragment.line; offsets[i] = fragment.offset; sizes[i] = fragment.size; widths[i] = fragment.width;
+                fills[i] = fragment.fill; instructions[i] = fragment.instruction; expressions[i] = fragment.expressions; bytes[i] = fragment.bytes;
+            }
+        }
+    }
+    private static final class SymbolData {
+        final String name, alias;
+        /** The index of its section in the parse's, or -1 for none. */
+        final int section, offset, line;
+        SymbolData(Symbol symbol, Map<Section, Integer> sections) {
+            name = symbol.name; alias = symbol.alias; offset = symbol.offset; line = symbol.line;
+            section = symbol.section == null ? -1 : sections.get(symbol.section);
+        }
+        static SymbolData[] of(Collection<Symbol> symbols, Map<Section, Integer> sections) {
+            SymbolData[] data = new SymbolData[symbols.size()];
+            int i = 0;
+            for (Symbol symbol : symbols) data[i++] = new SymbolData(symbol, sections);
+            return data;
+        }
+        Symbol symbol(Unit unit, Section[] sections) {
+            return new Symbol(unit, name, section < 0 ? null : sections[section], offset, line, alias);
+        }
+    }
+
     /** Assembles one translation unit. */
     public GnuAssembler(MIPSprogram program) { this(List.of(program), null, null); }
     /** Assembles and links translation units in link order. */
@@ -183,11 +272,39 @@ public final class GnuAssembler {
      * need. {@code library} and {@code entrySymbol} may be null.
      */
     public GnuAssembler(List<MIPSprogram> programs, RuntimeLibrary library, String entrySymbol) {
+        this(programs, null, List.of(), library, entrySymbol);
+    }
+    /**
+     * Also takes the program's other units, the canonical paths in {@code files} of GNU compiler
+     * assembly, as an archive's members: each is linked only when it defines a global the program
+     * still needs, and then as the program's own code, with its own local symbols. Every one is
+     * parsed, so its mistakes are reported whether or not the link takes it. A unit that another
+     * unit includes is already part of that one, and is no member of its own.
+     */
+    public GnuAssembler(List<MIPSprogram> programs, MIPSFileSystem files, List<String> archive,
+                        RuntimeLibrary library, String entrySymbol) {
         this.library = library;
         this.entrySymbol = entrySymbol == null || entrySymbol.isEmpty() ? null : entrySymbol;
-        for (MIPSprogram program : programs) units.add(new Unit(program, units.size()));
+        this.programs = new ArrayList<>(programs);
+        this.files = files;
+        this.archivePaths = new ArrayList<>(archive);
+        if (!archivePaths.isEmpty() && files == null) throw new IllegalArgumentException("An archive needs the files it is read from");
     }
     public ErrorList getErrors() { return errors; }
+
+    /** The program's own units the link took, by File: the entry units, then the archive's members. */
+    public List<String> linkedUnits() {
+        List<String> paths = new ArrayList<>();
+        for (int i = 0; i < ownUnits; i++) paths.add(units.get(i).program.getFilename());
+        return paths;
+    }
+    /** The entry units' programs, then the archive's, as far as they were read: linked or not. */
+    public List<MIPSprogram> unitPrograms() { return Collections.unmodifiableList(unitPrograms); }
+    /**
+     * The Files whose units this assembly parsed from their text, the program's own and the
+     * library's, rather than taking the parse from the cache: the ones that changed or were new.
+     */
+    public List<String> assembledUnits() { return new ArrayList<>(assembled); }
 
     /**
      * Where the linked program's heap, and so the first block sbrk hands out, starts: MARS's heap
@@ -220,8 +337,7 @@ public final class GnuAssembler {
         MIPSprogram program = new MIPSprogram();
         program.prepareForAssembly(path, files, AssemblerProfile.GNU_COMPILER_V1);
         GnuAssembler assembler = new GnuAssembler(program);
-        Unit unit = assembler.units.get(0);
-        unit.parseAll();
+        Unit unit = assembler.unit(program, false, Set.of());
         assembler.fail();
         List<String> defined = new ArrayList<>(unit.definedGlobals()), weak = new ArrayList<>();
         for (String name : defined) if (unit.weak.contains(name)) weak.add(name);
@@ -229,8 +345,88 @@ public final class GnuAssembler {
                 unit.strongReferences().toArray(new String[0]));
     }
 
-    /** Expand includes without the educational tokenizer rejecting GNU expressions. */
+    /**
+     * Expand includes without the educational tokenizer rejecting GNU expressions. A unit that
+     * includes nothing takes its lines and tokens from the cache when its text is the one they were
+     * made from, so the unit's parse can be taken from there too.
+     */
     public static List<TokenList> prepare(MIPSprogram program, MIPSFileSystem files) throws ProcessingException {
+        String text = files.read(program.getFilename());
+        if (!Preparation.cacheable(text)) {
+            program.setPreparation(null);
+            return tokenize(program, files);
+        }
+        Preparation preparation = Preparation.find(program.getFilename(), text);
+        if (preparation == null) {
+            // Made on a program of its own, so what the cache keeps refers to no Build's state.
+            MIPSprogram template = new MIPSprogram();
+            template.readSource(program.getFilename(), text);
+            List<TokenList> tokens = tokenize(template, files);
+            preparation = Preparation.store(program.getFilename(), text, template.getSourceLineList(), tokens);
+        }
+        program.setSourceLineList(preparation.lines);
+        program.setPreparation(preparation);
+        return preparation.tokens;
+    }
+
+    /**
+     * What preparing and parsing a unit made of its text, kept so that a unit that has not changed is
+     * neither tokenized nor parsed again, as x86's Core keeps the objects of its library units. It is
+     * kept only for a unit that includes nothing, since an included File changes on its own, and a
+     * parse only when it reported nothing at all. An entry belongs to a path and serves exactly the
+     * text it was made from: a unit's new text replaces it. The entries least recently used go once
+     * their text passes a budget.
+     */
+    public static final class Preparation {
+        /** Characters of unit text the cache keeps, about 32 MiB of source. */
+        private static final long BUDGET = 32L << 20;
+        private static final LinkedHashMap<String, Preparation> CACHE = new LinkedHashMap<>();
+        private static long size;
+        private final String key, text;
+        final ArrayList<SourceLine> lines;
+        final List<TokenList> tokens;
+        /** The unit's parses, by the lines a layout made long branches of, see {@link #branchesKey}. */
+        private final Map<String, Parse> parses = new HashMap<>();
+
+        private Preparation(String key, String text, ArrayList<SourceLine> lines, List<TokenList> tokens) {
+            this.key = key; this.text = text; this.lines = lines; this.tokens = tokens;
+        }
+        static boolean cacheable(String text) { return !text.contains(".include"); }
+        static Preparation find(String path, String text) {
+            Preparation found = CACHE.get(path);
+            if (found == null || !found.text.equals(text)) return null;
+            // The most recently used goes last, the first to be evicted first.
+            CACHE.remove(path);
+            CACHE.put(path, found);
+            return found;
+        }
+        static Preparation store(String path, String text, ArrayList<SourceLine> lines, List<TokenList> tokens) {
+            Preparation preparation = new Preparation(path, text, lines, tokens);
+            Preparation old = CACHE.remove(path);
+            if (old != null) size -= old.text.length();
+            CACHE.put(path, preparation);
+            size += text.length();
+            Iterator<Preparation> oldest = CACHE.values().iterator();
+            while (size > BUDGET && oldest.hasNext()) {
+                Preparation evicted = oldest.next();
+                if (evicted == preparation) break;
+                size -= evicted.text.length();
+                oldest.remove();
+            }
+            return preparation;
+        }
+        Parse parse(Set<Integer> longBranches) { return parses.get(branchesKey(longBranches)); }
+        void keep(Set<Integer> longBranches, Parse parse) { parses.put(branchesKey(longBranches), parse); }
+        private static String branchesKey(Set<Integer> longBranches) {
+            List<Integer> lines = new ArrayList<>(longBranches);
+            Collections.sort(lines);
+            return lines.toString();
+        }
+        /** Forgets every unit, and every statement's encoding, so the next assembly starts from the text. */
+        public static void clear() { CACHE.clear(); size = 0; ENCODINGS.clear(); }
+    }
+
+    private static List<TokenList> tokenize(MIPSprogram program, MIPSFileSystem files) throws ProcessingException {
         ArrayList<SourceLine> lines = new ArrayList<>();
         ErrorList errors = new ErrorList();
         expand(program, files, new ArrayList<>(), lines, errors);
@@ -241,9 +437,19 @@ public final class GnuAssembler {
             SourceLine line = lines.get(i);
             TokenList list = new TokenList();
             list.setProcessedLine(line.getSource());
-            Matcher matcher = LEX.matcher(line.getSource());
-            while (matcher.find()) {
-                String text = matcher.group();
+            String source = line.getSource();
+            Matcher matcher = LEX.matcher(source);
+            for (int at = 0; ; ) {
+                while (at < source.length() && separator(source.charAt(at))) at++;
+                if (at >= source.length()) break;
+                int start = at, end = source.charAt(at) == '"' ? stringEnd(source, at) : -1;
+                if (end < 0) {
+                    if (!matcher.find(at)) break;
+                    start = matcher.start();
+                    end = matcher.end();
+                }
+                String text = source.substring(start, end);
+                at = end;
                 TokenTypes type = types.get(text);
                 if (type == null) {
                     try { type = TokenTypes.matchTokenType(text); }
@@ -251,7 +457,7 @@ public final class GnuAssembler {
                     if (type == null || type == TokenTypes.ERROR) type = TokenTypes.IDENTIFIER;
                     types.put(text, type);
                 }
-                Token token = new Token(type, text, program, i + 1, matcher.start() + 1);
+                Token token = new Token(type, text, program, i + 1, start + 1);
                 token.setOriginal(line.getMIPSprogram(), line.getLineNumber());
                 list.add(token);
             }
@@ -260,6 +466,29 @@ public final class GnuAssembler {
         if (errors.errorsOccurred()) throw new ProcessingException(errors);
         return tokens;
     }
+    /**
+     * Where the string literal that starts at `start` ends, after its closing quote, or -1 when the
+     * line does not close it. This is LEX's string alternative scanned by hand: a regex group
+     * repeated once a character recurses once a character, and a long `.ascii`, such as the byte
+     * table a compiler writes for a C array, exhausts the stack.
+     */
+    private static int stringEnd(String line, int start) {
+        for (int at = start + 1; at < line.length(); at++) {
+            char c = line.charAt(at);
+            if (c == '\\') {
+                if (++at >= line.length()) return -1;
+            } else if (c == '"') {
+                return at + 1;
+            }
+        }
+        return -1;
+    }
+
+    /** What LEX skips between tokens: the white space of `\s`, and commas. */
+    private static boolean separator(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\u000B' || c == '\f' || c == '\r' || c == ',';
+    }
+
     private static void expand(MIPSprogram source, MIPSFileSystem files, List<String> stack,
                                ArrayList<SourceLine> output, ErrorList errors) {
         if (stack.size() >= 64 || stack.contains(source.getFilename())) {
@@ -276,7 +505,7 @@ public final class GnuAssembler {
                 List<String> args = arguments(text.substring(8));
                 require(args.size() == 1, ".include requires one quoted path");
                 String path = SourcePath.resolveInclude(source.getFilename(), unquote(args.get(0)));
-                require(!stack.contains(path) && stack.size() < 64, "Recursive or excessive include: " + path);
+                require(!stack.contains(path) && stack.size() < 64, "Recursive or excessive include: ", path);
                 MIPSprogram child = new MIPSprogram();
                 child.readSource(path, files.read(path));
                 expand(child, files, stack, output, errors);
@@ -290,7 +519,12 @@ public final class GnuAssembler {
     /** Parses every unit, links them and writes the program to memory. Returns the executable statements by address. */
     public ArrayList<ProgramStatement> assemble() throws ProcessingException {
         MemoryLayoutFacts.clear();
-        for (Unit unit : units) unit.parseAll();
+        for (MIPSprogram program : programs) {
+            unitPrograms.add(program);
+            units.add(unit(program, false, Set.of()));
+        }
+        ownUnits = units.size();
+        readArchive();
         fail();
         Set<String> required = new LinkedHashSet<>();
         if (entrySymbol != null) required.add(entrySymbol);
@@ -319,7 +553,7 @@ public final class GnuAssembler {
      * defines it, in rounds, so the link order is the order members were first needed.
      */
     private void resolveMembers(Set<String> required) throws ProcessingException {
-        if (library == null) return;
+        if (library == null && archive.isEmpty()) return;
         Set<String> loaded = new HashSet<>();
         for (Unit unit : units) loaded.add(unit.program.getFilename());
         boolean pulled = true;
@@ -332,18 +566,23 @@ public final class GnuAssembler {
                 wanted.addAll(unit.strongReferences());
                 // A weak reference pulls nothing, except to what the library says it always
                 // supplies: GCC refers to __cxa_pure_virtual weakly from every abstract class's vtable.
-                for (String name : unit.weakReferences()) if (library.resolvesWeak(name)) wanted.add(name);
+                if (library != null) for (String name : unit.weakReferences()) if (library.resolvesWeak(name)) wanted.add(name);
             }
             for (String name : wanted) {
                 if (defined.contains(name)) continue;
                 if (legacyGlobals && Globals.symbolTable.getAddress(name) != SymbolTable.NOT_FOUND) continue;
-                String path = library.memberFor(name);
-                if (path == null || !loaded.add(path)) continue;
+                // The entry symbol comes from the library's start code, as a start object linked
+                // ahead of the program's own would supply it; any other name from the program's
+                // archive first, which ld searches before the library on its command line.
+                boolean entry = required.contains(name) && !legacyGlobals;
+                if (!entry && take(name, defined)) { pulled = true; continue; }
+                String path = library == null ? null : library.memberFor(name);
+                if (path == null || !loaded.add(path)) {
+                    if (entry && take(name, defined)) pulled = true;
+                    continue;
+                }
                 try {
-                    Unit unit = new Unit(library.load(path), units.size());
-                    unit.fromLibrary = true;
-                    units.add(unit);
-                    unit.parseAll();
+                    units.add(unit(library.load(path), true, Set.of()));
                     pulled = true;
                 } catch (ProcessingException exception) {
                     for (ErrorMessage message : exception.errors().getErrorMessages()) errors.add(message);
@@ -351,6 +590,78 @@ public final class GnuAssembler {
             }
             fail();
         }
+    }
+
+    /**
+     * Links the archive's unit that defines {@code name}, when there is one the link has not taken:
+     * among the program's own units, in archive order, so a unit's place does not depend on which
+     * reference pulled it first. What it defines is then defined, as for ld, so another unit that
+     * defines the same name is not pulled for it.
+     */
+    private boolean take(String name, Set<String> defined) {
+        Unit unit = archiveIndex.get(name);
+        if (unit == null || !archive.remove(unit)) return false;
+        int at = programs.size(), order = archiveOrder.get(unit);
+        while (at < ownUnits && archiveOrder.get(units.get(at)) < order) at++;
+        units.add(at, unit);
+        ownUnits++;
+        defined.addAll(unit.definedGlobals());
+        return true;
+    }
+
+    /**
+     * Reads and parses every unit of the archive, so each reports its mistakes whether or not the
+     * link takes it, and indexes the globals each defines. A unit that another unit, or the
+     * program, includes is part of that unit already.
+     */
+    private void readArchive() {
+        List<MIPSprogram> read = new ArrayList<>();
+        for (String path : archivePaths) {
+            try {
+                MIPSprogram program = new MIPSprogram();
+                program.prepareForAssembly(path, files, AssemblerProfile.GNU_COMPILER_V1);
+                read.add(program);
+            } catch (ProcessingException exception) {
+                for (ErrorMessage message : exception.errors().getErrorMessages()) errors.add(message);
+            }
+        }
+        Set<String> included = new HashSet<>();
+        List<MIPSprogram> every = new ArrayList<>(programs);
+        every.addAll(read);
+        for (MIPSprogram program : every)
+            for (SourceLine line : program.getSourceLineList())
+                if (!line.getSourcePath().equals(program.getFilename())) included.add(line.getSourcePath());
+        for (MIPSprogram program : read) {
+            if (included.contains(program.getFilename())) continue;
+            unitPrograms.add(program);
+            Unit unit = unit(program, false, Set.of());
+            archiveOrder.put(unit, archive.size());
+            archive.add(unit);
+            for (String name : unit.definedGlobals()) archiveIndex.putIfAbsent(name, unit);
+        }
+    }
+
+    /**
+     * A unit of {@code program}: its parse taken from the cache when the program's text has one for
+     * these long branches, else parsed, and kept there when the parse reported nothing.
+     */
+    private Unit unit(MIPSprogram program, boolean fromLibrary, Set<Integer> longBranches) {
+        Unit unit = new Unit(program, nextUnit++);
+        unit.fromLibrary = fromLibrary;
+        unit.longBranches.addAll(longBranches);
+        Preparation preparation = program.getPreparation();
+        Parse parse = preparation == null ? null : preparation.parse(longBranches);
+        if (parse != null) {
+            unit.restore(parse);
+            return unit;
+        }
+        int before = errors.getErrorMessages().size();
+        unit.parseAll();
+        assembled.add(program.getFilename());
+        // A parse cut short by the error limit, or one with something to say, is not kept.
+        if (preparation != null && errors.getErrorMessages().size() == before && !errors.errorLimitExceeded())
+            preparation.keep(longBranches, unit.snapshot());
+        return unit;
     }
 
     private ArrayList<ProgramStatement> link(long textBase, long dataBase) throws ProcessingException {
@@ -384,14 +695,9 @@ public final class GnuAssembler {
             for (Unit unit : units) relaxed |= unit.relaxFarBranches();
             if (!relaxed || round >= 16) break;
             List<Unit> again = new ArrayList<>();
-            for (Unit unit : units) {
-                Unit next = new Unit(unit.program, unit.index);
-                // a library member stays one when its far branches are relaxed
-                next.fromLibrary = unit.fromLibrary;
-                next.longBranches.addAll(unit.longBranches);
-                next.parseAll();
-                again.add(next);
-            }
+            // a library member stays one when its far branches are relaxed, and a unit without a
+            // new far branch takes its parse from the cache
+            for (Unit unit : units) again.add(unit(unit.program, unit.fromLibrary, unit.longBranches));
             units.clear();
             units.addAll(again);
             fail();
@@ -425,6 +731,8 @@ public final class GnuAssembler {
     private void attempt(Unit unit, int line, Runnable action) { unit.attempt(line, action); }
     private void fail() throws ProcessingException { if (errors.errorsOccurred()) throw new ProcessingException(errors); }
     private static void require(boolean condition, String message) { if (!condition) throw new Invalid(message); }
+    /** As {@link #require(boolean, String)}, joining the message only when it is thrown: these run for every statement. */
+    private static void require(boolean condition, String message, String detail) { if (!condition) throw new Invalid(message + detail); }
     private static boolean matches(Pattern pattern, String text) { return pattern.matcher(text).matches(); }
     /** The array family whose bound ld provides under this name when nothing defines it, or -1. */
     private static int arrayBound(String name) {
@@ -477,7 +785,7 @@ public final class GnuAssembler {
                     total += position - text;
                 }
                 long end = position + section.size;
-                if (family == TEXT) require(end <= 0xffffffffL && (section.size == 0 || Memory.inTextSegment((int)(end - 1))), "Section exceeds mapped memory: " + section.name);
+                if (family == TEXT) require(end <= 0xffffffffL && (section.size == 0 || Memory.inTextSegment((int)(end - 1))), "Section exceeds mapped memory: ", section.name);
                 else if (section.size != 0) requireStaticDataFits(end);
                 if (family == TEXT) text = end; else data = end;
                 total += section.size;
@@ -555,6 +863,8 @@ public final class GnuAssembler {
         /** The section whose last instruction was a branch in noreorder mode, still owed its delay slot. */
         Section delaySlot;
         Section current, previous;
+        /** What the parse defines and refers to, worked out once: the link asks every round. */
+        private Set<String> defined, strong, weakly;
 
         Unit(MIPSprogram program, int index) { this.program = program; this.index = index; }
 
@@ -584,14 +894,15 @@ public final class GnuAssembler {
             }
         }
 
-        /** The global and weak names this unit defines. */
+        /** The global and weak names this unit defines. Read once parsed, as are the two below. */
         Set<String> definedGlobals() {
+            if (defined != null) return defined;
             Set<String> names = new LinkedHashSet<>();
             for (String name : declared) {
                 Symbol symbol = symbols.get(name);
                 if (symbol != null && (symbol.section == null || symbol.section.family >= 0)) names.add(name);
             }
-            return names;
+            return defined = Collections.unmodifiableSet(names);
         }
 
         /**
@@ -599,16 +910,66 @@ public final class GnuAssembler {
          * never pulls an archive member for. A name declared global and not defined counts as used.
          */
         Set<String> strongReferences() {
+            if (strong != null) return strong;
             Set<String> names = referencedNames();
             names.removeIf(name -> symbols.containsKey(name) || weak.contains(name));
-            return names;
+            return strong = Collections.unmodifiableSet(names);
         }
 
         /** The names this unit refers to weakly without defining them, which ld never pulls a member for. */
         Set<String> weakReferences() {
+            if (weakly != null) return weakly;
             Set<String> names = referencedNames();
             names.removeIf(name -> symbols.containsKey(name) || !weak.contains(name));
-            return names;
+            return weakly = Collections.unmodifiableSet(names);
+        }
+
+        /** This unit's parse, without its program, sections' places or assembler, for the cache. */
+        Parse snapshot() {
+            List<Section> list = new ArrayList<>(sections.values());
+            Map<Section, Integer> at = new HashMap<>();
+            for (int i = 0; i < list.size(); i++) at.put(list.get(i), i);
+            String[] keys = sections.keySet().toArray(new String[0]);
+            SectionData[] sectionData = new SectionData[list.size()];
+            for (int i = 0; i < list.size(); i++) sectionData[i] = new SectionData(keys[i], list.get(i));
+            Map<String, SymbolData[]> numericData = new LinkedHashMap<>();
+            for (Map.Entry<String, List<Symbol>> entry : numeric.entrySet()) numericData.put(entry.getKey(), SymbolData.of(entry.getValue(), at));
+            return new Parse(sectionData, SymbolData.of(symbols.values(), at), SymbolData.of(forwardAliases.values(), at), numericData,
+                    new ArrayList<>(declared), new ArrayList<>(weak), current == null ? -1 : at.get(current),
+                    definedGlobals(), strongReferences(), weakReferences());
+        }
+
+        /** Puts back a parse {@link #snapshot} kept, as {@link #parseAll} would have made it from the same text. */
+        void restore(Parse parse) {
+            program.createParsedList();
+            program.createMacroPool();
+            Section[] restored = new Section[parse.sections.length];
+            for (int i = 0; i < restored.length; i++) {
+                SectionData data = parse.sections[i];
+                Section section = new Section(this, data.name, data.flags, data.type, data.entrySize, data.group, data.family);
+                section.size = data.size;
+                section.alignment = data.alignment;
+                section.priority = data.priority;
+                for (int f = 0; f < data.lines.length; f++)
+                    section.fragments.add(new Fragment(section, data.lines[f], data.offsets[f], data.sizes[f], data.instructions[f],
+                            data.expressions[f], data.widths[f], data.bytes[f], data.fills[f]));
+                sections.put(data.key, section);
+                sectionsByName.put(data.name, section);
+                restored[i] = section;
+            }
+            for (SymbolData data : parse.symbols) symbols.put(data.name, data.symbol(this, restored));
+            for (SymbolData data : parse.forwardAliases) forwardAliases.put(data.name, data.symbol(this, restored));
+            for (Map.Entry<String, SymbolData[]> entry : parse.numeric.entrySet()) {
+                List<Symbol> list = new ArrayList<>();
+                for (SymbolData data : entry.getValue()) list.add(data.symbol(this, restored));
+                numeric.put(entry.getKey(), list);
+            }
+            declared.addAll(parse.declared);
+            weak.addAll(parse.weak);
+            current = parse.current < 0 ? null : restored[parse.current];
+            defined = parse.defined;
+            strong = parse.strong;
+            weakly = parse.weakly;
         }
 
         private Set<String> referencedNames() {
@@ -648,7 +1009,8 @@ public final class GnuAssembler {
             for (Section section : sections.values()) {
                 if (!section.executable() || section.discarded()) continue;
                 for (Fragment fragment : section.fragments) {
-                    if (fragment.instruction == null || longBranches.contains(fragment.line)) continue;
+                    // every conditional branch starts with a b, which spares the others the pattern
+                    if (fragment.instruction == null || !fragment.instruction.startsWith("b") || longBranches.contains(fragment.line)) continue;
                     Matcher branch = CONDITIONAL_BRANCH.matcher(fragment.instruction);
                     if (!branch.matches()) continue;
                     try {
@@ -767,11 +1129,11 @@ public final class GnuAssembler {
             if (op.equals(".set") && args.size() == 1) { option(args.get(0)); return; }
             if (op.equals(".module")) { module(args); return; }
             if (op.equals(".nan")) {
-                require(args.size() == 1 && (args.get(0).equals("legacy") || args.get(0).equals("2008")), "Unsupported NaN encoding: " + rest);
+                require(args.size() == 1 && (args.get(0).equals("legacy") || args.get(0).equals("2008")), "Unsupported NaN encoding: ", rest);
                 return;
             }
             if (op.equals(".gnu_attribute")) { attribute(args, line); return; }
-            if (op.equals(".option")) { require(args.size() == 1 && args.get(0).equals("pic0"), "Unsupported GNU option: " + rest); return; }
+            if (op.equals(".option")) { require(args.size() == 1 && args.get(0).equals("pic0"), "Unsupported GNU option: ", rest); return; }
             // Only audited nonallocatable families can be discarded. Their labels are
             // retained so references from runtime sections produce a specific error.
             if (current.family < 0) return;
@@ -884,7 +1246,7 @@ public final class GnuAssembler {
                 if (!op.endsWith("byte")) naturalAlignment(width, line);
                 append(line, Math.multiplyExact(width, args.size()), null, args, width, null, 0); return;
             }
-            require(!op.startsWith("."), "Unsupported GNU directive: " + op);
+            require(!op.startsWith("."), "Unsupported GNU directive: ", op);
             require(current.executable(), "Instruction outside executable section");
             require(current.size % 4 == 0, "Instruction address is not four-byte aligned");
             // GNU as allows spaces inside an operand, as in 8 ( $sp ); none of them is significant.
@@ -906,7 +1268,7 @@ public final class GnuAssembler {
             if (!reorder && matches(DELAYED, op)) delaySlot = current;
         }
         private void define(Symbol symbol) {
-            require(!symbols.containsKey(symbol.name), "Duplicate/reassigned symbol: " + symbol.name);
+            require(!symbols.containsKey(symbol.name), "Duplicate/reassigned symbol: ", symbol.name);
             symbols.put(symbol.name, symbol);
         }
         private void switchSection(Section next) { previous = current; current = next; autoAlign = true; }
@@ -920,11 +1282,11 @@ public final class GnuAssembler {
             String entrySize = null, group = null;
             if (flags != null && flags.contains("M") && args.size() > next) entrySize = args.get(next++);
             if (flags != null && flags.contains("G")) {
-                require(args.size() > next, "Group section flags require a group name: " + name);
+                require(args.size() > next, "Group section flags require a group name: ", name);
                 group = args.get(next++);
-                require(matches(NAME, group), "Invalid section group name: " + group);
+                require(matches(NAME, group), "Invalid section group name: ", group);
                 // Without "comdat" a group is never deduplicated, which no supported compiler emits.
-                require(args.size() > next && args.get(next++).equals("comdat"), "Only COMDAT section groups are supported: " + name);
+                require(args.size() > next && args.get(next++).equals("comdat"), "Only COMDAT section groups are supported: ", name);
             }
             require(args.size() <= next, "Unsupported section declaration");
             if (flags == null) {
@@ -939,22 +1301,22 @@ public final class GnuAssembler {
                     name.equals(".fini_array") || name.startsWith(".fini_array.") && matches(PRIORITIZED_ARRAY, name) ? FINI :
                     matches(DATA_SECTION, name) ? DATA : matches(BSS_SECTION, name) ? BSS : name.equals(".common") ? COMMON : -1;
             boolean debug = matches(DEBUG_SECTION, name);
-            require(family >= 0 || debug, "Unsupported section: " + name);
+            require(family >= 0 || debug, "Unsupported section: ", name);
             boolean array = family == INIT || family == FINI;
             String actualFlags = flags == null ? family == TEXT ? "ax" : family == RODATA ? "a" : family >= INIT ? "aw" : "" : flags;
             String actualType = type == null ? family >= BSS ? "@nobits" : "@progbits" : type.replace('%', '@');
             if (array && actualType.equals(family == INIT ? "@init_array" : "@fini_array")) actualType = "@progbits";
-            require(matches(SECTION_FLAGS, actualFlags) && (actualType.equals("@progbits") || actualType.equals("@nobits")), "Unsupported section flags/type: " + name);
-            require(family >= 0 ? actualFlags.contains("a") && actualFlags.contains("x") == (family == TEXT) && actualFlags.contains("w") == (family >= INIT) : !actualFlags.contains("a"), "Conflicting section flags: " + name);
-            require(actualType.equals(family >= BSS ? "@nobits" : "@progbits"), "Conflicting section type: " + name);
-            require(group == null || family >= 0, "Section group on a discarded section: " + name);
+            require(matches(SECTION_FLAGS, actualFlags) && (actualType.equals("@progbits") || actualType.equals("@nobits")), "Unsupported section flags/type: ", name);
+            require(family >= 0 ? actualFlags.contains("a") && actualFlags.contains("x") == (family == TEXT) && actualFlags.contains("w") == (family >= INIT) : !actualFlags.contains("a"), "Conflicting section flags: ", name);
+            require(actualType.equals(family >= BSS ? "@nobits" : "@progbits"), "Conflicting section type: ", name);
+            require(group == null || family >= 0, "Section group on a discarded section: ", name);
             if (actualFlags.contains("M")) require(entrySize != null && matches(ENTRY_SIZE, entrySize) && Integer.parseInt(entrySize) <= 256, "Mergeable section requires a bounded entry size");
             else require(entrySize == null, "Unexpected section entry size");
             require(!actualFlags.contains("S") || actualFlags.contains("M"), "String section requires merge flag");
             String key = group == null ? name : name + "\0" + group;
             Section found = sections.get(key);
             if (found != null) {
-                if (flags != null) require(found.flags.equals(actualFlags) && found.type.equals(actualType) && Objects.equals(found.entrySize, entrySize), "Conflicting repeated section declaration: " + name);
+                if (flags != null) require(found.flags.equals(actualFlags) && found.type.equals(actualType) && Objects.equals(found.entrySize, entrySize), "Conflicting repeated section declaration: ", name);
                 return found;
             }
             Section created = new Section(this, name, actualFlags, actualType, entrySize, group, family);
@@ -1019,7 +1381,7 @@ public final class GnuAssembler {
                 case "softfloat": case "singlefloat": case "doublefloat": case "oddspreg": case "nooddspreg": case "fp=32":
                     break;
                 default:
-                    require(matches(ARCHITECTURE, name), "Unsupported GNU option: .set " + name);
+                    require(matches(ARCHITECTURE, name), "Unsupported GNU option: .set ", name);
             }
         }
         private void module(List<String> args) {
@@ -1034,7 +1396,7 @@ public final class GnuAssembler {
                 case "nomips16": case "nomicromips": case "nomips3d": case "nomdmx": case "nodsp": case "nodspr2": case "nomt": case "nomsa": case "novirt":
                     return;
                 default:
-                    require(value.startsWith("arch=") && matches(ARCHITECTURE, value), "Unsupported module option: " + value);
+                    require(value.startsWith("arch=") && matches(ARCHITECTURE, value), "Unsupported module option: ", value);
             }
         }
         private void attribute(List<String> args, int line) {
@@ -1118,7 +1480,7 @@ public final class GnuAssembler {
             // by operand count, as a mnemonic can be a basic instruction with one count and a
             // pseudo-instruction with another (lw $t1,($t2) beside lw $t1,-100($t2)).
             ArrayList<?> matches = Globals.instructionSet.matchOperator(op);
-            require(matches != null && !matches.isEmpty(), "Unsupported instruction: " + op);
+            require(matches != null && !matches.isEmpty(), "Unsupported instruction: ", op);
             ArrayList<Instruction> pseudos = new ArrayList<>();
             boolean basicOfOtherArity = false;
             for (Object candidate : matches) {
@@ -1139,11 +1501,11 @@ public final class GnuAssembler {
             String source = op + " " + (label ? String.join(",", args.subList(0, args.size() - 1)) + (args.size() > 1 ? "," : "") + "__gnu_label" : joined);
             TokenList tokens = new Tokenizer(program).tokenizeLine(line, source, errors, false);
             Instruction instruction = OperandFormat.bestOperandMatch(tokens, pseudos.isEmpty() ? new ArrayList<Object>(matches) : pseudos);
-            require(instruction instanceof ExtendedInstruction && OperandFormat.tokenOperandMatch(tokens, instruction, errors), "Unsupported pseudo instruction: " + op);
+            require(instruction instanceof ExtendedInstruction && OperandFormat.tokenOperandMatch(tokens, instruction, errors), "Unsupported pseudo instruction: ", op);
             List<String> result = new ArrayList<>();
             for (Object entry : ((ExtendedInstruction)instruction).getBasicIntructionTemplateList()) {
                 String template = (String)entry;
-                require(!matches(VALUE_TEMPLATE, template), "Unsupported pseudo instruction: " + op);
+                require(!matches(VALUE_TEMPLATE, template), "Unsupported pseudo instruction: ", op);
                 require(at || !USES_AT.matcher(template).find(), op + " needs $at, which .set noat reserved");
                 String expanded = ExtendedInstruction.makeTemplateSubstitutions(program, template, tokens);
                 int labelAt = expanded.indexOf("LAB");
@@ -1186,7 +1548,7 @@ public final class GnuAssembler {
                     if (fragment.width == 0) { require(value.number.signum() >= 0, "Negative symbol size"); continue; }
                     int bits = fragment.width * 8;
                     boolean fits = value.number.compareTo(ONE.shiftLeft(bits - 1).negate()) >= 0 && value.number.compareTo(ONE.shiftLeft(bits)) < 0;
-                    require(!value.symbolic || fits, "Symbol fixup overflows " + bits + " bits");
+                    if (value.symbolic && !fits) throw new Invalid("Symbol fixup overflows " + bits + " bits");
                     if (!fits) errors.add(new ErrorMessage(ErrorMessage.WARNING, program, fragment.line, 1, "Integer literal truncated to " + bits + " bits"));
                     require(!fragment.section.zeroed() || value.number.signum() == 0, "Nonzero initializer in zeroed section");
                     for (int byteIndex = 0; byteIndex < fragment.width; byteIndex++) writeByte(fragment.address() + index * fragment.width + byteIndex, value.number.shiftRight(byteIndex * 8).intValue() & 255);
@@ -1219,13 +1581,14 @@ public final class GnuAssembler {
          */
         private String resolveInstruction(Fragment fragment, String[] synthetic) {
             String text = fragment.instruction.trim();
-            Matcher anyModifier = ANY_MODIFIER.matcher(text);
-            while (anyModifier.find()) require(matches(SUPPORTED_MODIFIER, anyModifier.group(1)), "Unsupported address modifier: %" + anyModifier.group(1));
+            boolean modified = text.indexOf('%') >= 0;
+            Matcher anyModifier = modified ? ANY_MODIFIER.matcher(text) : null;
+            while (modified && anyModifier.find()) require(matches(SUPPORTED_MODIFIER, anyModifier.group(1)), "Unsupported address modifier: %", anyModifier.group(1));
             int space = 0;
             while (space < text.length() && !Character.isWhitespace(text.charAt(space))) space++;
             String op = text.substring(0, space);
-            Matcher matcher = MODIFIER.matcher(text);
-            while (matcher.find()) {
+            Matcher matcher = modified ? MODIFIER.matcher(text) : null;
+            while (modified && matcher.find()) {
                 int start = matcher.start();
                 String kind = matcher.group(1), expression = modifierExpression(text, start);
                 int end = start + kind.length() + expression.length() + 3;
@@ -1241,14 +1604,14 @@ public final class GnuAssembler {
             }
             String rest = space < text.length() ? text.substring(space + 1).trim() : "";
             List<String> args = arguments(rest);
-            boolean target = matches(BRANCH, op) || op.equals("j") || op.equals("jal");
+            boolean target = BRANCHES.contains(op) || op.equals("j") || op.equals("jal");
             if (target) {
                 int targetIndex = args.size() - 1;
                 require(targetIndex >= 0, "Missing branch target");
                 Value value = evaluate(args.get(targetIndex), fragment.line, fragment.section, fragment.offset, false);
                 require(value.section != null && value.section.executable() && value.number.and(BigInteger.valueOf(3)).signum() == 0, "Branch target is not an aligned executable label");
                 long address = fragment.address(), destination = value.number.longValue();
-                if (matches(BRANCH, op)) {
+                if (BRANCHES.contains(op)) {
                     // The offset counts words from the delay slot, as MARS and the hardware both do.
                     long delta = destination - (address + 4);
                     require(delta >= -(1L << 17) && delta < (1L << 17), "Branch target is out of range");
@@ -1265,11 +1628,11 @@ public final class GnuAssembler {
                     require(paren >= 0 && isGeneralRegister(arg.substring(paren + 1, arg.length() - 1)), "Invalid base register");
                     String expr = arg.substring(0, paren);
                     BigInteger value = evaluate(expr.isEmpty() ? "0" : expr, fragment.line, fragment.section, fragment.offset, false).number;
-                    require(value.compareTo(BigInteger.valueOf(-32768)) >= 0 && value.compareTo(BigInteger.valueOf(32767)) <= 0, "Memory offset does not fit 16 bits: " + expr);
+                    require(value.compareTo(BigInteger.valueOf(-32768)) >= 0 && value.compareTo(BigInteger.valueOf(32767)) <= 0, "Memory offset does not fit 16 bits: ", expr);
                     args.set(i, value + arg.substring(paren));
                 } else {
                     BigInteger value = evaluate(arg, fragment.line, fragment.section, fragment.offset, false).number;
-                    require(value.compareTo(BigInteger.valueOf(Integer.MIN_VALUE)) >= 0 && value.compareTo(BigInteger.valueOf(0xffffffffL)) <= 0, "Operand exceeds 32 bits: " + arg);
+                    require(value.compareTo(BigInteger.valueOf(Integer.MIN_VALUE)) >= 0 && value.compareTo(BigInteger.valueOf(0xffffffffL)) <= 0, "Operand exceeds 32 bits: ", arg);
                     args.set(i, value.toString());
                 }
             }
@@ -1314,18 +1677,35 @@ public final class GnuAssembler {
             return TokenTypes.INTEGER_32;
         }
         private void encode(String text, Fragment fragment, ArrayList<ProgramStatement> machine) {
+            SourceLine source = program.getSourceLineList().get(fragment.line - 1);
+            TokenList original = program.getTokenList().get(fragment.line - 1);
+            ProgramStatement.Encoding known = ENCODINGS.get(text);
+            if (known != null) {
+                store(ProgramStatement.encoded(known, program, source.getSource(), original, (int)fragment.address(),
+                        source.getSourcePath(), source.getLineNumber()), machine);
+                return;
+            }
+            int before = errors.getErrorMessages().size();
             TokenList tokens = tokenize(text, fragment.line);
             require(!tokens.isEmpty(), "Empty instruction expansion");
             ArrayList<?> matches = Globals.instructionSet.matchOperator(tokens.get(0).getValue());
-            require(matches != null && !matches.isEmpty(), "Unsupported instruction: " + text);
+            require(matches != null && !matches.isEmpty(), "Unsupported instruction: ", text);
             Instruction instruction = OperandFormat.bestOperandMatch(tokens, matches);
-            require(instruction instanceof BasicInstruction && OperandFormat.tokenOperandMatch(tokens, instruction, errors), "Invalid basic instruction: " + text);
-            SourceLine source = program.getSourceLineList().get(fragment.line - 1);
-            ProgramStatement statement = new ProgramStatement(program, source.getSource(), program.getTokenList().get(fragment.line - 1), tokens,
+            require(instruction instanceof BasicInstruction && OperandFormat.tokenOperandMatch(tokens, instruction, errors), "Invalid basic instruction: ", text);
+            ProgramStatement statement = new ProgramStatement(program, source.getSource(), original, tokens,
                     instruction, (int)fragment.address(), source.getSourcePath(), source.getLineNumber(), List.of());
             statement.buildBasicStatementFromBasicInstruction(errors);
             statement.buildMachineStatementFromBasicStatement(errors);
+            // A symbol's value depends on where the statement is, and a message would not be said again.
+            if (errors.getErrorMessages().size() == before && !namesSymbol(tokens)) {
+                if (ENCODINGS.size() >= MAX_ENCODINGS) ENCODINGS.clear();
+                ENCODINGS.put(text, statement.encoding());
+            }
             store(statement, machine);
+        }
+        private boolean namesSymbol(TokenList tokens) {
+            for (int i = 0; i < tokens.size(); i++) if (tokens.get(i).getType() == TokenTypes.IDENTIFIER) return true;
+            return false;
         }
         private void store(ProgramStatement statement, ArrayList<ProgramStatement> machine) {
             try { Globals.memory.setStatement(statement.getAddress(), statement); }
@@ -1351,7 +1731,7 @@ public final class GnuAssembler {
          */
         private Value resolve(String name, int line, Section section, int offset, boolean absolute, Set<String> visiting) {
             Symbol symbol;
-            if (matches(NUMERIC_REFERENCE, name)) {
+            if (!name.isEmpty() && Character.isDigit(name.charAt(0)) && matches(NUMERIC_REFERENCE, name)) {
                 List<Symbol> candidates = numeric.getOrDefault(name.substring(0, name.length() - 1), List.of());
                 symbol = null;
                 for (Symbol candidate : candidates) {
@@ -1377,7 +1757,7 @@ public final class GnuAssembler {
                 }
                 if (weak.contains(name)) return new Value(ZERO, null, true);
             }
-            require(symbol != null, "Unresolved symbol: " + name);
+            require(symbol != null, "Unresolved symbol: ", name);
             return valueOf(symbol, absolute, visiting);
         }
         Value valueOf(Symbol symbol, Set<String> visiting) { return valueOf(symbol, false, visiting); }
@@ -1386,12 +1766,12 @@ public final class GnuAssembler {
                 // Units can reuse local names, so the cycle check names the defining unit too.
                 String key = index + ":" + symbol.name;
                 require(visiting.size() < 64, "Alias nesting exceeds 64 levels");
-                require(visiting.add(key), "Cyclic symbol alias: " + symbol.name);
+                require(visiting.add(key), "Cyclic symbol alias: ", symbol.name);
                 Value value = new Expression(symbol.alias, symbol.line, symbol.section, symbol.offset, absolute, visiting).parse();
                 visiting.remove(key); return value;
             }
-            require(!absolute, "Layout expression depends on a section/symbol: " + symbol.name);
-            require(!symbol.section.discarded(), "Runtime reference to discarded section: " + symbol.name);
+            require(!absolute, "Layout expression depends on a section/symbol: ", symbol.name);
+            require(!symbol.section.discarded(), "Runtime reference to discarded section: ", symbol.name);
             return new Value(BigInteger.valueOf(symbol.section.base + symbol.offset), symbol.section, true);
         }
         private final class Expression {
@@ -1406,7 +1786,7 @@ public final class GnuAssembler {
                 this.text = text; this.line = line; this.section = section; this.offset = offset; this.absolute = absolute; this.visiting = visiting;
                 require(text.length() <= 4096, "Expression exceeds 4096 characters");
             }
-            Value parse() { Value value = sum(); white(); require(position == text.length(), "Unsupported expression: " + text); return value; }
+            Value parse() { Value value = sum(); white(); require(position == text.length(), "Unsupported expression: ", text); return value; }
             void white() { while (position < text.length() && Character.isWhitespace(text.charAt(position))) position++; }
             Value sum() {
                 Value left = unary(); white();
@@ -1437,7 +1817,7 @@ public final class GnuAssembler {
                 if (c == '(') { position++; Value value = sum(); white(); require(position < text.length() && text.charAt(position++) == ')', "Unclosed expression"); return value; }
                 int start = position;
                 while (position < text.length() && (Character.isLetterOrDigit(text.charAt(position)) || ".$_".indexOf(text.charAt(position)) >= 0)) position++;
-                require(position > start, "Unsupported expression: " + text);
+                require(position > start, "Unsupported expression: ", text);
                 String atom = text.substring(start, position);
                 if (atom.equals(".")) { require(!absolute, "Layout expression depends on current location"); return new Value(BigInteger.valueOf(section.base + offset), section, true); }
                 if (matches(NUMERIC_REFERENCE, atom) || !Character.isDigit(atom.charAt(0))) return resolve(atom, line, section, offset, absolute, visiting);

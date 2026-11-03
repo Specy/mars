@@ -15,7 +15,7 @@ const HANDLER_NAMES = [
     'openFile', 'closeFile', 'writeFile', 'readFile', 'confirm', 'inputDialog',
     'outputDialog', 'readDouble', 'readFloat', 'readInt', 'readString', 'readChar',
     'printString', 'sleep', 'midiOut', 'time', 'stdIn', 'seekFile', 'stdOut', 'stdErr',
-    'randomSeed',
+    'randomSeed', 'unlink', 'mkdir', 'rmdir', 'rename', 'stat', 'getdents',
 ]
 
 /**

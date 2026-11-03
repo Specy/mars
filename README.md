@@ -162,6 +162,13 @@ The syscalls behave as MARS 4.5 does on Java 21, so handlers only move text and 
 *   Bytes cross as plain arrays of numbers from 0 to 255. `writeFile` answers with the number of
     bytes written, or -1, and the program receives that count; `readFile` and `stdIn` answer
     `[count, bytes]`, with a count of 0 at the end of the input and -1 for a failed read.
+*   The folder calls, services 1026 to 1065, are extensions of this Core numbered as Linux's
+    asm-generic table numbers them (unlink, mkdir, rmdir, rename, stat, getdents). Their handlers
+    answer 0, or a count, or minus a Linux error number (-2 not found, -17 already exists, -20 not
+    a folder, -21 is a folder, -39 folder not empty), which the program receives unchanged; a
+    rejected promise reaches it as -5. `stat` and `getdents` answer the bytes of Linux's structures,
+    which the syscall stores at the program's buffer: a negative getdents size answers -22 without
+    calling the handler, and a buffer over 65536 bytes is asked for 65536.
 
 ```typescript
 mipsSimulator.registerHandler("inputDialog", (message) => window.prompt(message)); // null on Cancel
@@ -182,6 +189,12 @@ mipsSimulator.registerHandler("stdIn", async (length) => {
 | `writeFile` | 15 | file descriptor, bytes | bytes written, or -1 |
 | `closeFile` | 16 | file descriptor | nothing |
 | `seekFile` | 62 | file descriptor, offset, whence | the new position, or -1 |
+| `unlink` | 1026 | path | 0, or minus a Linux error number |
+| `mkdir` | 1030 | path | 0, or minus a Linux error number |
+| `rmdir` | 1031 | path | 0, or minus a Linux error number |
+| `rename` | 1034 | from path, to path | 0, or minus a Linux error number |
+| `stat` | 1038 | path | `[0, bytes]` of Linux's `struct stat64`, or `[-errno, []]` |
+| `getdents` | 1065 on a folder's descriptor | file descriptor, most bytes to read | `[count, bytes]` of `linux_dirent` records |
 | `stdIn` | 14 on descriptor 0 | most bytes to read | `[count, bytes]` |
 | `stdOut`, `stdErr` | 15 on descriptors 1 and 2 | bytes | nothing |
 | `confirm` | 50 | message | `ConfirmResult` |

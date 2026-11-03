@@ -63,6 +63,49 @@ public class ProgramStatement {
     private boolean altered;
     private static final String invalidOperator = "<INVALID>";
 
+    /**
+     * What a basic statement's text alone decides: its instruction, operands, basic statement and
+     * machine code. An assembler that meets the same text again, in another place or Build, makes
+     * its statement from these with {@link #encoded} instead of tokenizing, matching and encoding
+     * it once more. Only for a statement that names no symbol, whose encoding would depend on where
+     * it is, and holding nothing of the program it came from.
+     */
+    public static final class Encoding {
+        private final Instruction instruction;
+        private final int[] operands;
+        private final int numOperands, binaryStatement;
+        private final String basicAssemblyStatement, machineStatement;
+        private final BasicStatementList basicStatementList;
+        private Encoding(ProgramStatement statement) {
+            instruction = statement.instruction;
+            operands = statement.operands.clone();
+            numOperands = statement.numOperands;
+            binaryStatement = statement.binaryStatement;
+            basicAssemblyStatement = statement.basicAssemblyStatement;
+            machineStatement = statement.machineStatement;
+            basicStatementList = statement.basicStatementList;
+        }
+    }
+
+    /** This statement's {@link Encoding}, once it is built. */
+    public Encoding encoding() {
+        return new Encoding(this);
+    }
+
+    /** A statement of {@code encoding} at {@code textAddress}, as building one from the same text there would make it. */
+    public static ProgramStatement encoded(Encoding encoding, MIPSprogram sourceProgram, String source, TokenList origTokenList,
+                                           int textAddress, String sourcePath, int sourceLine) {
+        ProgramStatement statement = new ProgramStatement(sourceProgram, source, origTokenList, null, encoding.instruction,
+                textAddress, sourcePath, sourceLine, List.of());
+        statement.operands = encoding.operands.clone();
+        statement.numOperands = encoding.numOperands;
+        statement.binaryStatement = encoding.binaryStatement;
+        statement.basicAssemblyStatement = encoding.basicAssemblyStatement;
+        statement.machineStatement = encoding.machineStatement;
+        statement.basicStatementList = encoding.basicStatementList;
+        return statement;
+    }
+
 
     //////////////////////////////////////////////////////////////////////////////////
     /**
@@ -755,7 +798,7 @@ public class ProgramStatement {
     //
     // DPS 29-July-2010
 
-    private class BasicStatementList {
+    private static class BasicStatementList {
 
         private ArrayList list;
 
@@ -801,7 +844,7 @@ public class ProgramStatement {
             return result.toString();
         }
 
-        private class ListElement {
+        private static class ListElement {
             int type;
             String sValue;
             int iValue;

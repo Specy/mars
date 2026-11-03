@@ -63,6 +63,14 @@ public class MIPSprogram {
    private AssemblerProfile assemblerProfile = AssemblerProfile.MARS;
    private RuntimeLibrary runtimeLibrary;
    private String entrySymbol;
+   /** The program's other GNU units, the archive the link takes members from, and their files. */
+   private List<String> archive = List.of();
+   private MIPSFileSystem archiveFiles;
+   /** What the last GNU assembly linked and read, kept when it failed too; see {@link #getUnitPrograms()}. */
+   private List<String> linkedUnits = List.of(), assembledUnits = List.of();
+   private List<MIPSprogram> unitPrograms = List.of();
+   /** This unit's lines and parse in the assembly cache, or null; see {@link GnuAssembler.Preparation}. */
+   private GnuAssembler.Preparation preparation;
    /** Where the assembled program's heap starts; see {@link #getHeapStart()}. */
    private int heapStart = Memory.heapBaseAddress;
 
@@ -304,6 +312,44 @@ public class MIPSprogram {
    }
 
    /**
+    * The program's other units, GNU compiler assembly at these paths in {@code files}, which a
+    * GNU-profile link takes as an archive's members: each only when it defines a global the
+    * program still needs, as the program's own code.
+    **/
+
+   public void setArchive(List<String> units, MIPSFileSystem files) {
+      this.archive = new ArrayList<>(units);
+      this.archiveFiles = files;
+   }
+
+   /**
+    * The programs of the units the last GNU assembly read: this one, then the archive's, linked or
+    * not, for their lines and tokens. Only this one before an assembly, or for the MARS dialect.
+    **/
+
+   public List<MIPSprogram> getUnitPrograms() {
+      return unitPrograms.isEmpty() ? List.of(this) : unitPrograms;
+   }
+
+   /** The program's own units the last GNU assembly linked, by File: this one, then the archive's members. */
+   public List<String> getLinkedUnits() {
+      return linkedUnits;
+   }
+
+   /** The units the last GNU assembly parsed from their text rather than took from the cache. */
+   public List<String> getAssembledUnits() {
+      return assembledUnits;
+   }
+
+   public GnuAssembler.Preparation getPreparation() {
+      return preparation;
+   }
+
+   public void setPreparation(GnuAssembler.Preparation preparation) {
+      this.preparation = preparation;
+   }
+
+   /**
     * Assembles the MIPS source program. All files comprising the program must have
     * already been tokenized. Assembler warnings are not considered errors.
     * 
@@ -351,8 +397,14 @@ public class MIPSprogram {
       this.backStepper = null;
       ErrorList errors;
       if (assemblerProfile == AssemblerProfile.GNU_COMPILER_V1) {
-         GnuAssembler gnu = new GnuAssembler(List.of(this), runtimeLibrary, entrySymbol);
-         this.machineList = gnu.assemble();
+         GnuAssembler gnu = new GnuAssembler(List.of(this), archiveFiles, archive, runtimeLibrary, entrySymbol);
+         try {
+            this.machineList = gnu.assemble();
+         } finally {
+            this.unitPrograms = gnu.unitPrograms();
+            this.linkedUnits = gnu.linkedUnits();
+            this.assembledUnits = gnu.assembledUnits();
+         }
          this.heapStart = gnu.heapStart();
          errors = gnu.getErrors();
          if (warningsAreErrors && errors.warningsOccurred()) {

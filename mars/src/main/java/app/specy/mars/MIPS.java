@@ -51,6 +51,45 @@ public class MIPS {
         return this.main.getSourceLineList();
     }
 
+    /**
+     * The program of the unit whose File is {@code path} among those the last assembly read, the
+     * entry's or one of its other units', for that unit's lines and tokens; null for any other path.
+     */
+    public MIPSprogram getUnitProgram(String path) {
+        requireTokenized();
+        for (MIPSprogram program : main.getUnitPrograms()) if (program.getFilename().equals(path)) return program;
+        return null;
+    }
+
+    /**
+     * Every File the last assembly read for the program's own units, linked or not: the entry's
+     * File and what it includes, then each other unit's.
+     */
+    public List<String> getUnitFiles() {
+        requireTokenized();
+        Set<String> paths = new java.util.LinkedHashSet<>();
+        for (MIPSprogram program : main.getUnitPrograms())
+            for (SourceLine line : program.getSourceLineList()) paths.add(line.getSourcePath());
+        return new java.util.ArrayList<>(paths);
+    }
+
+    /**
+     * The program's own units the last assembly linked, by File: the entry first, then the other
+     * units the program needed. Empty before an assembly; only the entry in the MARS dialect.
+     */
+    public List<String> getLinkedUnits() {
+        if (main == null) return List.of();
+        return assemblerProfile == AssemblerProfile.GNU_COMPILER_V1 ? main.getLinkedUnits() : List.of(entryFile);
+    }
+
+    /**
+     * The units, the program's own and its library's, whose text the last assembly parsed rather
+     * than taking the parse an earlier assembly kept of the same text.
+     */
+    public List<String> getAssembledUnits() {
+        return main == null ? List.of() : main.getAssembledUnits();
+    }
+
     public ProgramStatement getStatementAtAddress(int address) {
         requireAssembled();
         return this.main.getMachineStatement(address);
@@ -87,6 +126,7 @@ public class MIPS {
     private final AssemblerProfile assemblerProfile;
     private RuntimeLibrary runtimeLibrary;
     private String entrySymbol;
+    private List<String> units = List.of();
 
     /**
      * Links {@code library}'s members for the globals the program uses and does not define, and
@@ -96,6 +136,27 @@ public class MIPS {
     public void setLinkInputs(RuntimeLibrary library, String entrySymbol) {
         this.runtimeLibrary = library;
         this.entrySymbol = entrySymbol == null || entrySymbol.isEmpty() ? null : entrySymbol;
+    }
+
+    /**
+     * The program's other units: Files of the source set, GNU compiler assembly like the entry, that
+     * the link takes as an archive's members, each only when it defines a global the program still
+     * needs, searched before the library. A unit it takes is the program's own code, with its own
+     * local labels. Every one is parsed and checked, taken or not. Only for the gnu-compiler-v1
+     * profile.
+     */
+    public void setUnits(String[] paths) {
+        if (paths == null) throw new IllegalArgumentException("Units must be an array of paths");
+        Set<String> seen = new HashSet<>();
+        for (String path : paths) {
+            SourcePath.requireCanonical(path);
+            if (path.equals(entryFile)) throw new IllegalArgumentException("The entry file is no other unit: " + path);
+            if (!files.exists(path)) throw new IllegalArgumentException("Unit is not present in the source set: " + path);
+            if (!seen.add(path)) throw new IllegalArgumentException("Duplicate unit: " + path);
+        }
+        if (paths.length > 0 && assemblerProfile != AssemblerProfile.GNU_COMPILER_V1)
+            throw new IllegalArgumentException("Other units are linked only with the gnu-compiler-v1 profile");
+        this.units = List.of(paths);
     }
 
     private MIPS(String entryFile, MemoryFileSystem files, AssemblerProfile profile) {
@@ -150,6 +211,7 @@ public class MIPS {
         main = new MIPSprogram();
         main.prepareForAssembly(entryFile, files, assemblerProfile);
         main.setLinkInputs(runtimeLibrary, entrySymbol);
+        main.setArchive(units, files);
         ErrorList result = main.assemble(List.of(main), true);
         Globals.memory.resetHeap(main.getHeapStart());
         Globals.program = main;
@@ -185,10 +247,20 @@ public class MIPS {
         return stack;
     }
 
+    /**
+     * The label at an address: the entry unit's own or a global, else one of another linked unit's
+     * own labels, such as a static function's, which only that unit's table holds.
+     */
     public String getLabelAtAddress(int address){
         requireAssembled();
         Symbol symbol = this.main.getLocalSymbolTable().getSymbolGivenIntAddressLocalOrGlobal(address);
-        return (symbol == null) ? null : symbol.getName();
+        if (symbol != null) return symbol.getName();
+        for (MIPSprogram program : main.getUnitPrograms()) {
+            if (program == main || program.getLocalSymbolTable() == null) continue;
+            symbol = program.getLocalSymbolTable().getSymbolGivenIntAddress(address);
+            if (symbol != null) return symbol.getName();
+        }
+        return null;
     }
 
     public Simulator.Reason simulate(int[] breakpoints) throws ProcessingException {

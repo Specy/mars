@@ -10,8 +10,10 @@ public final class MemoryLayoutFacts {
     private static final List<String> files = new ArrayList<>();
     private static final List<String> names = new ArrayList<>();
     private static final List<int[]> symbols = new ArrayList<>();
+    /** The name and address of every symbol recorded, which a symbol is recorded once by. */
+    private static final java.util.Set<String> recorded = new java.util.HashSet<>();
     public static int stackTop, previousSp;
-    public static void clear() { items.clear(); sections.clear(); names.clear(); files.clear(); symbols.clear(); }
+    public static void clear() { items.clear(); sections.clear(); names.clear(); files.clear(); symbols.clear(); recorded.clear(); }
     /** kind: 0 code, 1 initialized data, 2 reserved; alignment is the fifth field. */
     public static void item(int address, int length, int kind, String section, int alignment) {
         if (length <= 0) return;
@@ -21,7 +23,7 @@ public final class MemoryLayoutFacts {
     }
     /** A label, with the file that defines it and the 0-based line there, -1 when unknown. */
     public static void symbol(String name, int address, boolean data, boolean library, String file, int line) {
-        for (int i = 0; i < names.size(); i++) if (names.get(i).equals(name) && symbols.get(i)[0] == address) return;
+        if (!recorded.add(address + ":" + name)) return;
         names.add(name); files.add(file); symbols.add(new int[] { address, data ? 1 : 0, library ? 1 : 0, line });
     }
     private static int[] flatten(List<int[]> values, int width) {

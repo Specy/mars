@@ -147,6 +147,32 @@ public class JsMIPSIO extends MIPSIO {
         throw new JsHandlerFailure("Handler " + name + " must return a tuple of the byte count and the bytes read", null);
     }
 
+    /**
+     * Calls a folder handler that answers with a tuple of a result and bytes, as stat and getdents
+     * do, and copies the bytes into {@code destination}. Unlike {@link #callReadHandler}, a negative
+     * result, minus a Linux error number, is passed through unchanged and nothing is copied.
+     *
+     * @param counted whether the result counts the bytes, as getdents's does, so that no more are
+     *                copied than it says; stat's is 0 and all its bytes are the structure
+     * @return the number of bytes copied, or the negative result
+     */
+    private int callResultBytesHandler(String name, boolean counted, byte[] destination, int length, JSObject... args) {
+        JSObject result = callHandler(name, args);
+        if (isArray(result)) {
+            JSArray<JSObject> tuple = (JSArray<JSObject>) result;
+            if (tuple.getLength() == 2 && isNumber(tuple.get(0)) && isArray(tuple.get(1))) {
+                int count = ((JSNumber) tuple.get(0)).intValue();
+                if (count < 0) return count;
+                JSArray<JSNumber> bytes = (JSArray<JSNumber>) tuple.get(1);
+                int copied = Math.min(Math.min(bytes.getLength(), length), destination.length);
+                if (counted) copied = Math.min(count, copied);
+                for (int i = 0; i < copied; i++) destination[i] = (byte) bytes.get(i).intValue();
+                return copied;
+            }
+        }
+        throw new JsHandlerFailure("Handler " + name + " must return a tuple of the result and the bytes", null);
+    }
+
     /** A Java byte array as the plain array of numbers from 0 to 255 the handler types promise. */
     private static JSArray<JSNumber> toByteNumbers(byte[] bytes) {
         JSArray<JSNumber> numbers = JSArray.create(bytes.length);
@@ -192,6 +218,37 @@ public class JsMIPSIO extends MIPSIO {
     @Override
     public int readFile(int fileDescriptor, byte[] destination, int length) throws MIPSIOError {
         return callReadHandler("readFile", destination, length, JSNumber.valueOf(fileDescriptor), JSNumber.valueOf(length));
+    }
+
+    @Override
+    public int unlink(String path) throws MIPSIOError {
+        return callIntHandler("unlink", JSString.valueOf(path));
+    }
+
+    @Override
+    public int mkdir(String path) throws MIPSIOError {
+        return callIntHandler("mkdir", JSString.valueOf(path));
+    }
+
+    @Override
+    public int rmdir(String path) throws MIPSIOError {
+        return callIntHandler("rmdir", JSString.valueOf(path));
+    }
+
+    @Override
+    public int rename(String from, String to) throws MIPSIOError {
+        return callIntHandler("rename", JSString.valueOf(from), JSString.valueOf(to));
+    }
+
+    /** The handler answers {@code [0, bytes]}, its struct's whole length, or {@code [-errno, []]}. */
+    @Override
+    public int stat(String path, byte[] destination) throws MIPSIOError {
+        return callResultBytesHandler("stat", false, destination, destination.length, JSString.valueOf(path));
+    }
+
+    @Override
+    public int getdents(int fileDescriptor, byte[] destination, int length) throws MIPSIOError {
+        return callResultBytesHandler("getdents", true, destination, length, JSNumber.valueOf(fileDescriptor), JSNumber.valueOf(length));
     }
 
     @Override

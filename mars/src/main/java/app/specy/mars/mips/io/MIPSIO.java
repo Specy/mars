@@ -25,6 +25,60 @@ public abstract class MIPSIO {
      */
     public abstract int readFile(int fileDescriptor, byte[] destination, int length) throws MIPSIOError;
 
+    /*
+     * The folder calls (services 1026 to 1065, numbered as Linux's asm-generic table numbers them)
+     * answer 0, or a count, on success and minus a Linux error number on failure: -2 when nothing is
+     * at the path, -17 when something already is, -20 for a path through a file, -21 for a folder
+     * where a file is wanted, -39 for a folder that is not empty.
+     */
+
+    /**
+     * Deletes the file at {@code path}, for unlink (service 1026).
+     *
+     * @return 0, or minus a Linux error number
+     */
+    public abstract int unlink(String path) throws MIPSIOError;
+
+    /**
+     * Makes a folder at {@code path}, for mkdir (service 1030).
+     *
+     * @return 0, or minus a Linux error number
+     */
+    public abstract int mkdir(String path) throws MIPSIOError;
+
+    /**
+     * Removes the empty folder at {@code path}, for rmdir (service 1031).
+     *
+     * @return 0, or minus a Linux error number
+     */
+    public abstract int rmdir(String path) throws MIPSIOError;
+
+    /**
+     * Moves the file at {@code from} to {@code to}, for rename (service 1034).
+     *
+     * @return 0, or minus a Linux error number
+     */
+    public abstract int rename(String from, String to) throws MIPSIOError;
+
+    /**
+     * Describes what is at {@code path}, for stat (service 1038): copies Linux's {@code struct
+     * stat64} for the path into {@code destination}, which the syscall then stores at the program's
+     * buffer.
+     *
+     * @return the number of bytes copied, or minus a Linux error number, in which case nothing is
+     *         stored
+     */
+    public abstract int stat(String path, byte[] destination) throws MIPSIOError;
+
+    /**
+     * Reads the entries of the folder open on {@code fileDescriptor}, for getdents (service 1065):
+     * copies at most {@code length} bytes of Linux {@code linux_dirent} records into
+     * {@code destination}.
+     *
+     * @return the number of bytes copied, 0 at the end of the folder, or minus a Linux error number
+     */
+    public abstract int getdents(int fileDescriptor, byte[] destination, int length) throws MIPSIOError;
+
 
     // 0 ---> meaning Yes
     // 1 ---> meaning No

@@ -2,6 +2,7 @@ package app.specy.marsjs;
 
 import app.specy.mars.Globals;
 import app.specy.mars.MIPS;
+import app.specy.mars.MIPSprogram;
 import app.specy.mars.ProcessingException;
 import app.specy.mars.ProgramStatement;
 import app.specy.mars.assembler.AssemblerProfile;
@@ -67,20 +68,21 @@ public class JsMips {
     @JSExport
     public static JsMips makeMipsFromFilesWithProfile(String[] sourcePaths, String[] sources, String entryFile, String profile) {
         return makeMipsFromFilesWithOptions(sourcePaths, sources, entryFile, profile, "",
-                new String[0], new String[0], new String[0], new String[0], new String[0]);
+                new String[0], new String[0], new String[0], new String[0], new String[0], new String[0]);
     }
 
     /**
      * The factory with every option: the assembler profile, the global execution starts at
-     * (empty for the global main), and one library flattened into members, an index naming the
-     * member that defines each symbol, and the symbols a weak reference pulls all the same.
+     * (empty for the global main), one library flattened into members, an index naming the
+     * member that defines each symbol, and the symbols a weak reference pulls all the same, and the
+     * program's other units: paths of the source set the link takes as an archive's members.
      */
     @JSExport
     public static JsMips makeMipsFromFilesWithOptions(String[] sourcePaths, String[] sources, String entryFile,
                                                       String profile, String entrySymbol,
                                                       String[] memberPaths, String[] memberSources,
                                                       String[] indexSymbols, String[] indexMembers,
-                                                      String[] resolveWeak) {
+                                                      String[] resolveWeak, String[] units) {
         JsMips.getIOHandler(); // Ensure that the IO handler is initialized
         if (sourcePaths == null || sources == null || sourcePaths.length != sources.length) {
             throw new IllegalArgumentException("Source paths and contents must have the same length");
@@ -93,7 +95,32 @@ public class JsMips {
         RuntimeLibrary library = memberPaths == null || memberPaths.length == 0 ? null
                 : new RuntimeLibrary(memberPaths, memberSources, indexSymbols, indexMembers, resolveWeak);
         mips.setLinkInputs(library, entrySymbol);
+        mips.setUnits(units == null ? new String[0] : units);
         return new JsMips(mips);
+    }
+
+    /** Forgets every unit's parse the assembly cache keeps, so the next assembly parses each again. */
+    @JSExport
+    public static void clearAssemblyCache() {
+        GnuAssembler.Preparation.clear();
+    }
+
+    /** The program's own units the last assembly linked: the entry, then the other units it needed. */
+    @JSExport
+    public String[] getLinkedUnits() {
+        return main.getLinkedUnits().toArray(new String[0]);
+    }
+
+    /** The units whose text the last assembly parsed rather than took from the assembly cache. */
+    @JSExport
+    public String[] getAssembledUnits() {
+        return main.getAssembledUnits().toArray(new String[0]);
+    }
+
+    /** Every File the last assembly read for the program's own units, linked or not. */
+    @JSExport
+    public String[] getUnitFiles() {
+        return main.getUnitFiles().toArray(new String[0]);
     }
 
     /**
@@ -155,8 +182,21 @@ public class JsMips {
 
     @JSExport
     public JsMipsTokenizedLine[] getTokenizedLines() {
-        List<TokenList> tokenizedLines = this.main.getTokens();
-        List<SourceLine> sourceLines = this.main.getSourceLines();
+        return tokenizedLines(this.main.getTokens(), this.main.getSourceLines());
+    }
+
+    /**
+     * The tokenized lines of the unit whose File is {@code path}, the entry's or another unit's the
+     * last assembly read, with what it includes; empty for any other path.
+     */
+    @JSExport
+    public JsMipsTokenizedLine[] getTokenizedUnit(String path) {
+        MIPSprogram unit = this.main.getUnitProgram(path);
+        if (unit == null || unit.getTokenList() == null) return new JsMipsTokenizedLine[0];
+        return tokenizedLines(unit.getTokenList(), unit.getSourceLineList());
+    }
+
+    private static JsMipsTokenizedLine[] tokenizedLines(List<TokenList> tokenizedLines, List<SourceLine> sourceLines) {
         JsMipsTokenizedLine[] result = new JsMipsTokenizedLine[tokenizedLines.size()];
         for (int lineIndex = 0; lineIndex < tokenizedLines.size(); lineIndex++) {
             TokenList tokenizedLine = tokenizedLines.get(lineIndex);

@@ -105,6 +105,12 @@ public class SyscallLoader {
       add(new SyscallMidiOutSync());
       add(new SyscallTime());
       add(new SyscallLSeek());
+      add(new SyscallUnlink());
+      add(new SyscallMkdir());
+      add(new SyscallRmdir());
+      add(new SyscallRename());
+      add(new SyscallStat());
+      add(new SyscallGetdents());
 
       syscallList = processSyscallNumberOverrides(syscallList);
       return;

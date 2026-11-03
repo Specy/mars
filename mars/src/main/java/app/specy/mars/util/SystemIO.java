@@ -336,6 +336,83 @@ public class SystemIO {
       }
    }
 
+   /** Linux's EIO, what a folder call answers when the host failed to perform it. */
+   private static final int EIO = 5;
+   /** Linux's EINVAL, what getdents answers for a negative buffer size. */
+   private static final int EINVAL = 22;
+   /** The most bytes one getdents asks the host for, however large the program's buffer. */
+   public static final int GETDENTS_LIMIT = 65536;
+
+   /** Unlink (service 1026): 0, or minus a Linux error number. */
+   public static int unlink(String path) {
+      try {
+         return io.unlink(path);
+      } catch (MIPSIOError e) {
+         fileErrorString = "IO Exception on unlink of " + path;
+         return -EIO;
+      }
+   }
+
+   /** Mkdir (service 1030): 0, or minus a Linux error number. */
+   public static int makeFolder(String path) {
+      try {
+         return io.mkdir(path);
+      } catch (MIPSIOError e) {
+         fileErrorString = "IO Exception on mkdir of " + path;
+         return -EIO;
+      }
+   }
+
+   /** Rmdir (service 1031): 0, or minus a Linux error number. */
+   public static int removeFolder(String path) {
+      try {
+         return io.rmdir(path);
+      } catch (MIPSIOError e) {
+         fileErrorString = "IO Exception on rmdir of " + path;
+         return -EIO;
+      }
+   }
+
+   /** Rename (service 1034): 0, or minus a Linux error number. */
+   public static int rename(String from, String to) {
+      try {
+         return io.rename(from, to);
+      } catch (MIPSIOError e) {
+         fileErrorString = "IO Exception on rename of " + from;
+         return -EIO;
+      }
+   }
+
+   /**
+    * Stat (service 1038): the bytes of Linux's struct for {@code path} into {@code destination}.
+    *
+    * @return the number of bytes copied, or minus a Linux error number
+    */
+   public static int stat(String path, byte[] destination) {
+      try {
+         return io.stat(path, destination);
+      } catch (MIPSIOError e) {
+         fileErrorString = "IO Exception on stat of " + path;
+         return -EIO;
+      }
+   }
+
+   /**
+    * Getdents (service 1065): at most {@code length} bytes of the folder's records into
+    * {@code destination}, which holds at least that many.
+    *
+    * @return the number of bytes copied, 0 at the end of the folder, or minus a Linux error number
+    */
+   public static int readFolder(int fd, byte[] destination, int length) {
+      if (length < 0) return -EINVAL;
+      try {
+         return io.getdents(fd, destination, length);
+      } catch (MIPSIOError e) {
+         fileErrorString = "IO Exception on getdents of fd " + fd;
+         return -EIO;
+      }
+   }
+
    /**
     * Open a file for either reading or writing. Note that read/write flag is NOT
     * IMPLEMENTED. Also note that file permission modes are also NOT IMPLEMENTED.

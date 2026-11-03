@@ -34,6 +34,24 @@ MARS executes branches without delay slots: a taken branch skips the instruction
 
 Units link with ld semantics: global and weak symbols (an undefined weak reference is zero), COMDAT groups (the first copy is kept), `.init_array`/`.fini_array` (and their `.NNNNN` priority sections, in priority order before the plain one) with ld-provided `__init_array_start`/`__init_array_end` bounds, and global labels in the global symbol table. A conditional branch whose target ends up beyond its ±128 KiB reach is relaxed into the inverted branch over a `j`. `libraries` are archives of `gnu-compiler-v1` members with an index naming the member that defines each global: a member is pulled only for a global the program uses and does not define, transitively, after the program's own sections; a weak reference pulls nothing unless the library lists the symbol in `resolveWeak`. A MARS-dialect program can call members too: they are placed after its text and data, a global it defines is never pulled, and a program that pulls no member assembles byte for byte as before. `entrySymbol` (for example `_start`) must be defined by the link, pulls its own member, and is where `initialize` starts execution. `MIPS.analyzeGnuUnit(path, source)` reports what one unit defines and needs, for building an index. Errors read `Unresolved symbol: name` on the referencing line, `Multiple definition of name, first defined in path` and `Undefined entry symbol: name`.
 
+### Several units
+
+A program can span several `gnu-compiler-v1` units, as separately compiled C files do: `units` names other files of the source set, which the link takes as the members of an archive.
+
+```typescript
+const core = makeMipsFromFiles(
+    { 'main.s': main, 'list.s': list, 'unused.s': unused },
+    'main.s',
+    { assemblerProfile: 'gnu-compiler-v1', units: ['list.s', 'unused.s'] }
+);
+core.assemble();
+core.getLinkedUnits(); // ['main.s', 'list.s'] when main.s uses a global list.s defines
+```
+
+A unit joins the program only when it defines a global the program still needs, and units are searched before `libraries`, though `entrySymbol` still comes from a library that defines it. A linked unit keeps its own local labels and static names (two units can both have a `$L2` or a static `counter`), and its statements, labels and errors name its file. Every unit is parsed and checked whether it is linked or not; a unit that another one includes is part of that one. `getUnitFiles()` lists every file the units read, and `getTokenizedUnit(path)` gives one unit's tokens.
+
+A `gnu-compiler-v1` unit that includes nothing keeps its parse in the module, by its path and its exact text, and the encoding of each basic statement is kept by its text, so assembling it again, in any core, parses only the units that changed. `getAssembledUnits()` lists the units the last assembly parsed, and `MIPS.clearAssemblyCache()` forgets everything. The cache holds up to 32 MiB of unit text.
+
 `getAddressOfLabel(name)` returns a defined label/alias address after successful assembly, or `-1` when absent. Profile state is per program; memory and execution state retain the single-instance constraint below.
 
 Floating point literals are read as Java 21 reads them, correctly rounded: `.double` stores
@@ -153,6 +171,13 @@ The syscalls behave as MARS 4.5 does on Java 21, so handlers only move text and 
 *   Bytes cross as plain arrays of numbers from 0 to 255. `writeFile` answers with the number of
     bytes written, or -1, and the program receives that count; `readFile` and `stdIn` answer
     `[count, bytes]`, with a count of 0 at the end of the input and -1 for a failed read.
+*   The folder calls, services 1026 to 1065, are extensions of this Core numbered as Linux's
+    asm-generic table numbers them (unlink, mkdir, rmdir, rename, stat, getdents). Their handlers
+    answer 0, or a count, or minus a Linux error number (-2 not found, -17 already exists, -20 not
+    a folder, -21 is a folder, -39 folder not empty), which the program receives unchanged; a
+    rejected promise reaches it as -5. `stat` and `getdents` answer the bytes of Linux's structures,
+    which the syscall stores at the program's buffer: a negative getdents size answers -22 without
+    calling the handler, and a buffer over 65536 bytes is asked for 65536.
 
 ```typescript
 mipsSimulator.registerHandler("inputDialog", (message) => window.prompt(message)); // null on Cancel
@@ -173,6 +198,12 @@ mipsSimulator.registerHandler("stdIn", async (length) => {
 | `writeFile` | 15 | file descriptor, bytes | bytes written, or -1 |
 | `closeFile` | 16 | file descriptor | nothing |
 | `seekFile` | 62 | file descriptor, offset, whence | the new position, or -1 |
+| `unlink` | 1026 | path | 0, or minus a Linux error number |
+| `mkdir` | 1030 | path | 0, or minus a Linux error number |
+| `rmdir` | 1031 | path | 0, or minus a Linux error number |
+| `rename` | 1034 | from path, to path | 0, or minus a Linux error number |
+| `stat` | 1038 | path | `[0, bytes]` of Linux's `struct stat64`, or `[-errno, []]` |
+| `getdents` | 1065 on a folder's descriptor | file descriptor, most bytes to read | `[count, bytes]` of `linux_dirent` records |
 | `stdIn` | 14 on descriptor 0 | most bytes to read | `[count, bytes]` |
 | `stdOut`, `stdErr` | 15 on descriptors 1 and 2 | bytes | nothing |
 | `confirm` | 50 | message | `ConfirmResult` |

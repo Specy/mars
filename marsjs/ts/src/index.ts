@@ -8,6 +8,7 @@ type GeneratedExports = {
     getInstructionSet(): unknown
     makeMipsFromFilesWithOptions(...args: unknown[]): unknown
     analyzeGnuUnit(path: string, source: string): any
+    clearAssemblyCache(): void
     programArgumentsProblem(words: string[]): unknown
     programArgumentsSpace(): unknown
 }
@@ -82,6 +83,18 @@ export type AssemblyOptions = {
     entrySymbol?: string
     /** Libraries searched in order: the first one whose index names a symbol supplies it. */
     libraries?: RuntimeLibrary[]
+    /**
+     * The program's other units: paths of Files in the source set, GNU compiler assembly like the
+     * entry file, which the link takes as the members of an archive. A unit joins the program only
+     * when it defines a global the program still needs, as ld takes an object out of an archive,
+     * and is searched before the libraries, so a unit's definition wins over a library's; the entry
+     * symbol still comes from the library's start code. A unit the link takes is the program's own
+     * code: its statements, labels and messages name its File, and its local labels and static
+     * names stay its own, so two units can both have a `$L2` or a static `counter`. Every unit is
+     * parsed and checked whether or not it is taken; one that another unit includes is part of that
+     * unit already. Only with the `gnu-compiler-v1` profile. See `JsMips.getLinkedUnits`.
+     */
+    units?: string[]
 }
 
 /** The globals one GNU compiler unit defines and the ones it uses without defining. */
@@ -292,6 +305,35 @@ export type HandlerMap = {
      * position, or -1 when the seek fails.
      */
     seekFile: {in: [fileDescriptor: number, offset: number, whence: number], out: number}
+    /**
+     * Syscall 1026 (unlink; this and the other folder calls are extensions numbered as Linux's
+     * asm-generic table numbers them): delete the file at `path`. Like every folder call, answer 0
+     * on success or minus a Linux error number, which the program receives in $v0 unchanged: -2
+     * when nothing is at the path, -21 when it is a folder. A rejected promise reaches the program
+     * as -5. Paths are the program's strings decoded from UTF-8.
+     */
+    unlink: {in: [path: string], out: number}
+    /** Syscall 1030 (mkdir): make a folder at `path`. Answer 0, or minus a Linux error number. */
+    mkdir: {in: [path: string], out: number}
+    /** Syscall 1031 (rmdir): remove the empty folder at `path`. Answer 0, or minus a Linux error number. */
+    rmdir: {in: [path: string], out: number}
+    /** Syscall 1034 (rename): move the file at `from` to `to`. Answer 0, or minus a Linux error number. */
+    rename: {in: [from: string, to: string], out: number}
+    /**
+     * Syscall 1038 (stat): describe what is at `path`. Answer `[0, bytes]`, the bytes being Linux's
+     * `struct stat64` laid out as MIPS Linux lays it out (104 bytes, little-endian), which the
+     * syscall stores at the program's buffer, at most 256 of them; or `[-errno, []]`, which stores
+     * nothing.
+     */
+    stat: {in: [path: string], out: [result: number, buffer: number[]]}
+    /**
+     * Syscall 1065 (getdents) on a descriptor that `openFile` returned for a folder: read its entries
+     * as Linux's `linux_dirent` records, at most `length` bytes. Answer `[count, bytes]`, which the
+     * syscall stores at the program's buffer: the number of bytes, 0 at the end of the folder, or
+     * minus a Linux error number with no bytes. `length` is the program's buffer size, at most 65536;
+     * a negative size answers the program -22 without calling the handler.
+     */
+    getdents: {in: [fileDescriptor: number, length: number], out: [result: number, buffer: number[]]}
     /** Syscall 15 on descriptor 1: the bytes written to standard output. */
     stdOut: {in: [buffer: number[]], out: void}
     /** Syscall 15 on descriptor 2: the bytes written to standard error. */
@@ -424,6 +466,16 @@ export class MIPS {
     }
     public static getInstructionSet(){
         return backend.getInstructionSet() as JsInstruction[]
+    }
+    /**
+     * Forgets the parse every `gnu-compiler-v1` unit keeps by its text, and the encoding kept of every
+     * statement text, so the next assembly of each starts from its text (`JsMips.getAssembledUnits`).
+     * Nothing else needs it: an entry serves only the exact text it was made from, and the oldest go
+     * once they pass a budget of 32 MiB of text.
+     */
+    public static clearAssemblyCache(): void {
+        initializeMIPS()
+        backend.clearAssemblyCache()
     }
     /**
      * Throws the error `setProgramArguments` would throw for `argv`, `argv[0]` included, without
@@ -937,7 +989,30 @@ export interface JsMips {
     getStatementsAtSourceLocation(sourcePath: string, sourceLine: number): JsProgramStatement[];
 
 
+    /** The tokenized lines of the entry file's unit: the entry file and what it includes. */
     getTokenizedLines(): MipsTokenizedLine[]
+    /**
+     * The tokenized lines of the unit whose File is `path`, the entry's or one of
+     * `AssemblyOptions.units` the last assembly read, with what it includes; empty for another path.
+     */
+    getTokenizedUnit(path: string): MipsTokenizedLine[]
+    /**
+     * The program's own units the last assembly linked, by File: the entry file, then the
+     * `AssemblyOptions.units` it needed, in their order there. Readable after a failed assembly.
+     */
+    getLinkedUnits(): string[]
+    /**
+     * Every File the last assembly read for the program's own units, the entry file's and those it
+     * includes, then every unit of `AssemblyOptions.units`, linked or not.
+     */
+    getUnitFiles(): string[]
+    /**
+     * The units, the program's own and its libraries' members, whose text the last assembly parsed.
+     * A `gnu-compiler-v1` unit that includes nothing keeps its parse by its exact text, so the next
+     * assembly of the same text, in any core of this module, takes it from there instead: a Build
+     * parses again only the units that changed. See `MIPS.clearAssemblyCache`.
+     */
+    getAssembledUnits(): string[]
     /**
      * Checks if the simulation can be undone.
      * @returns True if the simulation can be undone, false otherwise.
@@ -1257,10 +1332,11 @@ export interface JsMips {
  * Creates a MIPS simulator from a virtual source tree and its entry file.
  *
  * Source paths are canonical, root-relative, case-sensitive POSIX paths. The source set is
- * snapshotted by this call; only the entry file and files reached through `.include` are assembled.
+ * snapshotted by this call; only the entry file, files reached through `.include` and the units
+ * `options.units` names are assembled.
  * @param files Source text keyed by canonical source path.
  * @param entryFile Canonical path of the file from which include expansion starts.
- * @param options The assembler profile, the entry symbol and the libraries to link; see `AssemblyOptions`.
+ * @param options The assembler profile, the entry symbol, the libraries and the other units to link; see `AssemblyOptions`.
  * @returns A new `JsMips` object.
  */
 export function makeMipsFromFiles(files: MIPSSourceSet, entryFile: string, options?: AssemblyOptions): JsMips {
@@ -1309,6 +1385,13 @@ export function makeMipsFromFiles(files: MIPSSourceSet, entryFile: string, optio
     if (typeof entryFile !== 'string') {
         throw new TypeError('Entry file must be a string')
     }
+    const units = options && Object.hasOwn(options, 'units') ? options.units : []
+    if (!Array.isArray(units) || units.some(path => typeof path !== 'string')) {
+        throw new TypeError('Units must be an array of paths')
+    }
+    if (units.length && profile !== 'gnu-compiler-v1') {
+        throw new TypeError('Other units are linked only with the gnu-compiler-v1 profile')
+    }
     const entries = Object.entries(files)
     for (const [sourcePath, source] of entries) {
         if (typeof source !== 'string') {
@@ -1327,6 +1410,7 @@ export function makeMipsFromFiles(files: MIPSSourceSet, entryFile: string, optio
         indexSymbols,
         indexMembers,
         resolveWeak,
+        [...units],
     ) as JsMips
     // the Java side reads each word as a string, so anything else is refused here, by name
     const setProgramArguments = core.setProgramArguments
