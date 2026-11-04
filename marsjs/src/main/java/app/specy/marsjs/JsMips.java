@@ -16,6 +16,7 @@ import app.specy.mars.mips.hardware.Coprocessor0;
 import app.specy.mars.mips.hardware.Coprocessor1;
 import app.specy.mars.mips.hardware.Register;
 import app.specy.mars.mips.hardware.RegisterFile;
+import app.specy.mars.mips.hardware.StackFrame;
 import app.specy.mars.simulator.BackStepper;
 import app.specy.mars.simulator.ProgramArgumentsAboveStack;
 import app.specy.mars.simulator.Simulator;
@@ -117,7 +118,7 @@ public class JsMips {
         return main.getAssembledUnits().toArray(new String[0]);
     }
 
-    /** Every File the last assembly read for the program's own units, linked or not. */
+    /** Every File the last assembly read for the program's own units: the entry's and those of the units it linked. */
     @JSExport
     public String[] getUnitFiles() {
         return main.getUnitFiles().toArray(new String[0]);
@@ -444,11 +445,11 @@ public class JsMips {
 
     @JSExport
     public JsStackFrame[] getCallStack(){
-        List<JsStackFrame> stack = new ArrayList<>();
-        for(int i = 0; i < this.main.getCallStack().length; i++) {
-            stack.add(new JsStackFrame(this.main.getCallStack()[i]));
-        }
-        return stack.toArray(new JsStackFrame[0]);
+        // each read copies every frame, so the stack is read once
+        StackFrame[] frames = this.main.getCallStack();
+        JsStackFrame[] stack = new JsStackFrame[frames.length];
+        for (int i = 0; i < frames.length; i++) stack[i] = new JsStackFrame(frames[i]);
+        return stack;
     }
 
     @JSExport
@@ -536,15 +537,16 @@ public class JsMips {
     }
 
     /**
-     * The values of the four implemented coprocessor 0 registers, in the order Coprocessor0
-     * holds them: $8 (vaddr), $12 (status), $13 (cause), $14 (epc).
+     * The values of the six implemented coprocessor 0 registers, in the order Coprocessor0 holds
+     * them: $8 (vaddr), $9 (count), $11 (compare), $12 (status), $13 (cause), $14 (epc), each as a
+     * program reads it: Count as it stands now, and Cause with the host's interrupt lines in it.
      */
     @JSExport
     public int[] getCoprocessor0Values() {
         Register[] registers = Coprocessor0.getRegisters();
         int[] values = new int[registers.length];
         for (int i = 0; i < registers.length; i++) {
-            values[i] = registers[i].getValue();
+            values[i] = Coprocessor0.getValue(registers[i].getNumber());
         }
         return values;
     }
@@ -558,20 +560,70 @@ public class JsMips {
     public void setCoprocessor0Value(int number, int value) {
         for (Register register : Coprocessor0.getRegisters()) {
             if (register.getNumber() == number) {
+                // as an mtc0 writes it: Count reads the value from the next instruction on,
+                // Compare turns the timer on and clears its pending interrupt
                 if (openPoke == null) {
-                    register.setValue(value);
+                    Coprocessor0.moveTo(number, value, false);
                     return;
                 }
-                int old = register.getValue();
+                int old = Coprocessor0.getValue(number);
                 if (old == value) {
                     return;
                 }
                 journalRegister(register.getName(), REGISTER_KIND_COPROCESSOR0, number, old);
-                Coprocessor0.updateRegister(number, value);
+                Coprocessor0.moveTo(number, value, true);
                 return;
             }
         }
-        throw new IllegalArgumentException("Coprocessor 0 register number must be 8, 12, 13 or 14");
+        throw new IllegalArgumentException("Coprocessor 0 register number must be 8, 9, 11, 12, 13 or 14");
+    }
+
+    /**
+     * Raises the level-triggered interrupt line of a device, {@code code} being MARS's code for
+     * it: 0x40 for the keyboard receiver and 0x80 for the display transmitter, which are Cause's
+     * pending bits 8 and 9 shifted right twice. The line stays pending, and the interrupt is taken
+     * again after every {@code eret}, until {@link #clearExternalInterrupt(int)} clears it; the
+     * host raises it for as long as its device asks, and states it again after an undo, which
+     * leaves the lines alone. Initialize clears every line.
+     */
+    @JSExport
+    public void raiseExternalInterrupt(int code) {
+        Coprocessor0.raiseExternal(code);
+    }
+
+    /**
+     * Clears a device's interrupt line, see {@link #raiseExternalInterrupt(int)}, and withdraws a
+     * pulse of the device that no interrupt has taken yet, see {@link #pulseExternalInterrupt(int)}.
+     */
+    @JSExport
+    public void clearExternalInterrupt(int code) {
+        Coprocessor0.clearExternal(code);
+    }
+
+    /**
+     * Sends one interrupt request from a device, edge-triggered as MARS's display transmitter
+     * asks: {@code code} as for {@link #raiseExternalInterrupt(int)}. The request is pending until
+     * an interrupt takes it, however long Status keeps it waiting, and a second pulse of the
+     * device before then is the same request. Taking it spends it, so it is not taken again after
+     * {@code eret}; the handler finds the device's bit in Cause until the next exception or
+     * interrupt, or until it writes the bit as 0 with {@code mtc0}. A pulse sent during an
+     * instruction or a Poke is undone with it, and the interrupt that spent one gives it back when
+     * it is undone. {@link #clearExternalInterrupt(int)} withdraws one, and initialize clears them.
+     */
+    @JSExport
+    public void pulseExternalInterrupt(int code) {
+        Coprocessor0.pulseExternal(code);
+    }
+
+    /**
+     * The interrupt the last run call took most recently, as three numbers: the address of the
+     * instruction it interrupted, which EPC holds, the pending bits Status let through (Cause's bits
+     * 8 to 15: 0x8000 the timer, 0x100 the keyboard, 0x200 the display) and the handler it entered;
+     * empty when the call took none. After a step, whether that step took one.
+     */
+    @JSExport
+    public int[] getInterruptTaken() {
+        return Coprocessor0.lastTaken();
     }
 
     @JSExport
@@ -996,6 +1048,21 @@ public class JsMips {
     @JSExport
     public void setPeripheralWord(double address, int value) throws AddressErrorException {
         Globals.memory.setRawWordNoNotify(toAddress(address), value);
+    }
+
+    @JSExport
+    public void trackWrites(double start, double end) {
+        Globals.memory.trackWrites(toAddress(start), toAddress(end));
+    }
+
+    @JSExport
+    public int[] takeWrittenBlocks() {
+        return Globals.memory.takeWrittenBlocks();
+    }
+
+    @JSExport
+    public int[] readMemoryWords(double address, int count) throws AddressErrorException {
+        return Globals.memory.getWordsForHost(toAddress(address), count);
     }
 
     /**

@@ -1,12 +1,13 @@
 package app.specy.mars.mips.hardware;
 
 
+/** One frame of the call stack: see {@link Stack}, which reuses frames from call to call. */
 public class StackFrame {
-    private final int pc;
-    private final int toAddress;
-    private final int sp;
-    private final int fp;
-    private final int[] registers;
+    private int pc;
+    private int toAddress;
+    private int sp;
+    private int fp;
+    private int[] registers;
 
     public StackFrame(
             int pc,
@@ -22,15 +23,26 @@ public class StackFrame {
         this.registers = registers;
     }
 
+    StackFrame() {
+    }
 
-    public static StackFrame fromGlobalState(int returnAddress){
-        return new StackFrame(
-                RegisterFile.getProgramCounter(),
-                RegisterFile.getStackPointerRegister().getValue(),
-                RegisterFile.getFramePointerRegister().getValue(),
-                returnAddress,
-                RegisterFile.getRegistersValues()
-        );
+    /**
+     * Fills this frame with the state of a call to {@code returnAddress} made now, into the register
+     * array it already has. No register is read as the program reads it, so no observer hears of it.
+     */
+    void capture(int returnAddress) {
+        pc = RegisterFile.getProgramCounter();
+        sp = RegisterFile.getStackPointerRegister().getValueNoNotify();
+        fp = RegisterFile.getFramePointerRegister().getValueNoNotify();
+        toAddress = returnAddress;
+        Register[] file = RegisterFile.getRegisters();
+        if (registers == null || registers.length != file.length) registers = new int[file.length];
+        for (int i = 0; i < file.length; i++) registers[i] = file[i].getValueNoNotify();
+    }
+
+    /** A frame of its own, which reusing this one cannot change. */
+    StackFrame copy() {
+        return new StackFrame(pc, sp, fp, toAddress, registers.clone());
     }
 
     public int getPC() {

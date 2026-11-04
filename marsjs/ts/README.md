@@ -28,7 +28,7 @@ The optional third factory argument selects the assembly profile, the entry symb
 const core = makeMipsFromFiles(files, 'main.s', { assemblerProfile: 'gnu-compiler-v1' });
 ```
 
-Omission selects `mars`, the educational MARS dialect with its macros and pseudo instructions, which is unchanged. `MIPS.assemblerProfiles` lists the supported profiles; every present invalid profile throws. `gnu-compiler-v1` is a bounded static GNU assembler for the MIPS32 output of GCC (`-march=mips32 -mabi=32 -mno-abicalls -fno-pic -G0 -fno-delayed-branch -mfp32 -mhard-float -EL`): independent named `.text*`, `.rodata*`/`.rdata`, `.data*`, `.bss*` and common sections, little-endian data with GNU as's MIPS self-alignment of `.half`/`.word`/`.dword`/`.float`/`.double` (`.align 0` turns it off), byte-valued string escapes, bounded expressions and aliases, numeric labels, `%hi`/`%lo`, PC-relative branches and absolute jumps. GCC's macros get GNU as's fixed expansions (`move`, `li`, `la`, `b`, `bal`, `beqz`, `bnez`, `neg`, `negu`, `not`, `slt`/`sltu` with an immediate, `sll`/`srl`/`sra` with a register amount, `div $0,…`, a bare load or store address through `$at`), other register-only macros use MARS's fixed templates (`seq`, `sge`, `abs`, `rol`, `bge`, `ulw`, `mfc1.d`, …), and `$fccN` condition codes are accepted. `.set` options that leave encodings unchanged (`noreorder`, `nomacro`, `noat`, `nomips16`, `push`/`pop`, …), `.module fp=32`, `.nan`, `.gnu_attribute 4,1`, `.ent`/`.end`/`.frame`/`.mask` and debug sections are accepted; MIPS16, microMIPS, 64-bit FPU modes, position-independent code, unsupported relocations and unresolved symbols are errors.
+Omission selects `mars`, the educational MARS dialect with its macros and pseudo instructions, which is unchanged. `MIPS.assemblerProfiles` lists the supported profiles; every present invalid profile throws. `gnu-compiler-v1` is a bounded static GNU assembler for the MIPS32 output of GCC (`-march=mips32 -mabi=32 -mno-abicalls -fno-pic -G0 -fno-delayed-branch -mfp32 -mhard-float -EL`): independent named `.text*`, `.rodata*`/`.rdata`, `.data*`, `.bss*` and common sections, little-endian data with GNU as's MIPS self-alignment of `.half`/`.word`/`.dword`/`.float`/`.double` (`.align 0` turns it off), byte-valued string escapes, bounded expressions and aliases, numeric labels, `%hi`/`%lo`, PC-relative branches and absolute jumps. GCC's macros get GNU as's fixed expansions (`move`, `li`, `la`, `b`, `bal`, `beqz`, `bnez`, `neg`, `negu`, `not`, `slt`/`sltu` with an immediate, `sll`/`srl`/`sra` with a register amount, `div $0,…`, a bare load or store address through `$at`), other register-only macros use MARS's fixed templates (`seq`, `sge`, `abs`, `rol`, `bge`, `ulw`, `mfc1.d`, …), and `$fccN` condition codes are accepted, as are MIPS32's `mfc0`/`mtc0` with a select (`mfc0 $2,$9,0`, which Clang always writes; MARS's coprocessor 0 has only select 0, so another is an error) and GNU's numbering of the FPU's control registers (`cfc1 $2,$31` for FCSR, which MARS's dialect writes `$f31`). `.set` options that leave encodings unchanged (`noreorder`, `nomacro`, `noat`, `nomips16`, `push`/`pop`, …), `.module fp=32`, `.nan`, `.gnu_attribute 4,1`, `.ent`/`.end`/`.frame`/`.mask` and debug sections are accepted; MIPS16, microMIPS, 64-bit FPU modes, position-independent code, unsupported relocations and unresolved symbols are errors.
 
 MARS executes branches without delay slots: a taken branch skips the instruction after it, and a link saves that instruction's address. In `.set noreorder` code every delay slot must therefore hold a `nop`, which is what GCC writes with `-fno-delayed-branch`, and a call returns to its `nop`; a filled slot is an error. In reorder mode no slot is emitted at all. Conditional traps lose their code field, which MARS does not encode.
 
@@ -48,7 +48,7 @@ core.assemble();
 core.getLinkedUnits(); // ['main.s', 'list.s'] when main.s uses a global list.s defines
 ```
 
-A unit joins the program only when it defines a global the program still needs, and units are searched before `libraries`, though `entrySymbol` still comes from a library that defines it. A linked unit keeps its own local labels and static names (two units can both have a `$L2` or a static `counter`), and its statements, labels and errors name its file. Every unit is parsed and checked whether it is linked or not; a unit that another one includes is part of that one. `getUnitFiles()` lists every file the units read, and `getTokenizedUnit(path)` gives one unit's tokens.
+A unit joins the program only when it defines a global the program still needs, and units are searched before `libraries`, though `entrySymbol` still comes from a library that defines it. A linked unit keeps its own local labels and static names (two units can both have a `$L2` or a static `counter`), and its statements, labels and errors name its file. Which globals a unit defines is read from its `.globl`, `.global` and `.weak` lines and the labels they name before anything else, and only a unit the link takes is parsed: a unit nothing needs is never checked, so it may be in MARS's own dialect, or have mistakes, without failing the assembly. A unit the program needs is GNU assembly like the rest, and when it does not parse, its first error says why it is linked. A unit that another one includes is part of that one. A `.globl` of a name a unit does not define counts as a need, as GNU as keeps it as an undefined global, which `ld` takes a member for: that is how a program asks for a unit holding `.ktext`, whose exception handler MIPS enters at 0x80000180 by its address, so nothing calls it (`<sim.h>`'s `SIM_LINK` in C). `.extern` needs nothing, as for GNU as. A program holds one handler, so two linked units that hold `.ktext` fail to assemble; units the link does not take are never compared. Nothing between a `.macro`, `.rept`, `.irp`, `.irpc` or `.if` line and its end counts in the scan, since a macro or a conditional may define what the text does not show; when a name is still undefined, such a unit is parsed on its own and linked only if it parses and defines the name. `getUnitFiles()` lists every file the linked units read, and `getTokenizedUnit(path)` gives one unit's tokens.
 
 A `gnu-compiler-v1` unit that includes nothing keeps its parse in the module, by its path and its exact text, and the encoding of each basic statement is kept by its text, so assembling it again, in any core, parses only the units that changed. `getAssembledUnits()` lists the units the last assembly parsed, and `MIPS.clearAssemblyCache()` forgets everything. The cache holds up to 32 MiB of unit text.
 
@@ -286,6 +286,86 @@ mipsSimulator.removeMemoryObservers()
 *   `undo()` restores memory through the same stores, so an observed range reports the restored
     values as ordinary writes and a device that follows notifications alone stays in step.
 
+### Written blocks
+
+A host that only mirrors a range of memory, such as a framebuffer, does not need a call on every
+store. Instead, it can have the simulator note which 1 KB blocks of the range were written, and
+read just those once per update:
+
+```ts
+// A 640 by 480 framebuffer of words at the static data base.
+mipsSimulator.trackWrites(0x10010000, 0x10010000 + 640 * 480 * 4)
+
+// ... run the program, then at each update:
+for (const block of mipsSimulator.takeWrittenBlocks()) {
+    const words = mipsSimulator.readMemoryWords(0x10010000 + block * 1024, 256)
+    screen.update(block * 256, words)
+}
+
+mipsSimulator.trackWrites(0, 0) // stop
+```
+
+*   Every store marks the map: the program's stores of every width, the services that write
+    memory, `setMemoryBytes`, Pokes and `setPeripheralWord`, and the restores of `undo()`, so after
+    an `undo()` the map names exactly the blocks it changed. A store straddling two blocks marks
+    both.
+*   Blocks are counted from the start of the range, and `takeWrittenBlocks()` returns them in
+    ascending order as an `Int32Array`, emptying the map.
+*   One range is tracked at a time, on the simulator's memory, which every `JsMips` shares. A call
+    replaces the range and forgets what was written; `trackWrites(0, 0)` stops. The range survives
+    `assemble()` and `initialize()`, as observers do, and assembling forgets what was written.
+*   `readMemoryWords(address, count)` reads words as `readMemoryBytes` reads bytes, without notifying
+    any observer, and returns them as an `Int32Array` of the signed words a load would read.
+
+## Interrupts
+
+Programs take interrupts the way MIPS32 does: a handler at `0x80000180` (`.ktext 0x80000180`, or
+`.ktext` in the `gnu-compiler-v1` profile), entered between two instructions with EPC holding the
+instruction it interrupted, Cause's exception code 0, and Status's EXL set; `eret` returns. An
+interrupt is taken when Status allows it: interrupts enabled (bit 0), EXL clear (bit 1), and the
+source's bit unmasked (bits 8 to 15).
+
+```ts
+// A device asks: Cause bit 8 (keyboard, MARS's 0x40) or 9 (display, 0x80).
+mipsSimulator.raiseExternalInterrupt(0x40)
+await mipsSimulator.step()                 // lands on 0x80000180 when Status lets it through
+mipsSimulator.getInterruptTaken()          // [interrupted pc, pending bits, handler], or []
+mipsSimulator.clearExternalInterrupt(0x40) // the device no longer asks
+mipsSimulator.pulseExternalInterrupt(0x80) // one request: taken once, then spent
+```
+
+*   **The entry is a step of its own**, at the interrupted instruction, which has not run: it counts
+    as an instruction, a breakpoint on the handler's first instruction stops a run there, and one
+    `undo()` returns to the interrupted instruction with EPC, Cause and Status put back.
+*   **Lines are level-triggered**: a raised line stays pending, and is taken again after every
+    `eret`, until it is cleared. `undo()` leaves the lines alone, since they are the host's: state
+    them again after one. `initialize()` clears them.
+*   **Pulses are edge-triggered**, as MARS's display transmitter is: `pulseExternalInterrupt` is one
+    request, pending until an interrupt takes it, however long Status keeps it waiting, and taking
+    it spends it, so `eret` does not bring it back. The handler finds the device's bit in Cause until
+    the next exception or interrupt, or until it writes the bit as 0 with `mtc0`. Pulses are part of
+    the undo history: one sent during an instruction or a Poke is undone with it, and undoing the
+    interrupt that spent one makes it pending again. `clearExternalInterrupt` withdraws a pending
+    pulse, and `initialize()` clears them.
+*   **The timer** is MIPS32's Count (`$9`) and Compare (`$11`), which MARS 4.5 does not have. Count
+    goes up once every two instructions executed, counted by the undo history's own count, so
+    `undo()` rewinds it and a run reaches the same Count at the same instruction every time. It
+    reads 0 at the program's first instruction, which in a compiled C program is the start code's,
+    not `main`'s. When Count becomes equal to Compare, that is when it goes up to Compare's value,
+    Cause's IP7 (`0x8000`) is set inside that instruction; writing Compare clears it. The timer is
+    off until the program first writes Compare.
+*   **A write that makes Count equal to Compare**, of either register, sets IP7 at once only when
+    the `mtc0` is an even-numbered instruction of the run (the 2nd, the 4th...), the moment Count
+    would reach that value by counting. After an odd-numbered one Count already holds the value
+    and next goes up past it, so the timer waits a whole turn of Count, 2^33 instructions. Set
+    Compare ahead of Count, as `Count + n`, to choose when the timer fires.
+*   **Cause's bits 8 to 15 belong to the sources**: `mtc0` and `setCoprocessor0Value` write the
+    rest of the register, and can only clear the bit a pulse left for the handler.
+*   Every exception reaches the handler once one is assembled: address errors, `break` and traps
+    such as `teq`, as in MARS.
+*   In the `gnu-compiler-v1` profile, `j` and `jal` cannot reach between user text and `.ktext`,
+    which are in different 256 MB regions: the error says to use `jalr`.
+
 ## Random numbers
 
 The random services draw from `java.util.Random`, implemented exactly, so a program that seeds a
@@ -354,15 +434,22 @@ rejection, such as a run call on a program that did not assemble, is the plain e
 
 Programs run in MARS's memory layout: text from 0x00400000, static data from 0x10010000, the heap
 from 0x10040000, the stack down from 0x7fffeffc and memory-mapped IO from 0xffff0000. The data
-segment, which static data and the heap share, ends at 0x10400000.
+segment, which static data and the heap share, is 64 MB, from 0x10000000 to 0x14000000, where
+MARS's ends at 0x10400000: addresses are as in MARS, so a program that fits in 4 MB runs as it
+does there, and one that needs more keeps going rather than running out. Memory is still
+allocated in 4 KB blocks as it is first written. sbrk (9) past 0x14000000 ends the program with
+`request (...) exceeds available heap storage`.
 
 *   A MARS-dialect program keeps this layout whatever its size, as in MARS: data past
     0x10040000 shares its addresses with the heap.
 *   A `gnu-compiler-v1` program's heap follows its static data (`.data`, `.rodata`, `.bss` and
     common symbols): once they reach past 0x10040000, the heap starts at the first 4 KiB page after
     them, where ld and a kernel put the break, and sbrk (9) hands out that address first. Static data
-    must fit in the data segment, 4,128,768 bytes from 0x10010000; a program with more fails to
-    assemble with `Static data ends at 0x10410000, past the end of the data segment at 0x10400000: ...`.
+    must fit in the data segment, 67,043,328 bytes from 0x10010000; a program with more fails to
+    assemble with `Static data ends at 0x14000004, past the end of the data segment at 0x14000000: ...`.
+*   The assembler emits at most 16 MiB (`Assembly exceeds 16 MiB emission limit`): text, `.data`
+    and `.rodata`. `.bss` and common symbols are not emitted, since memory starts zeroed, and only the
+    data segment bounds them.
 *   Library members linked after a MARS-dialect program must end below 0x10040000, or the program
     fails to assemble with `Static data reaches the heap at 0x10040000`.
 
@@ -432,6 +519,27 @@ so a fractional or `NaN` register index is truncated instead of rejected.
 
 `npm run test:wasm` runs the whole test suite on the WebAssembly build.
 
+## Migrating to 6.0.0
+
+*   **The data segment is 64 MB**, from 0x10000000 to 0x14000000, where MARS's ends at
+    0x10400000. Addresses do not move; an access between 0x10400000 and 0x14000000, which failed
+    before, now reaches memory. See [Memory layout](#memory-layout).
+*   **`.bss` and common symbols no longer count towards the 16 MiB emission limit.**
+*   **A `gnu-compiler-v1` unit is linked only when the program needs a global it defines**, a unit
+    holding `.ktext` too: the program names an exception handler, which the processor enters at
+    0x80000180 by its address, with a `.globl` of a name it does not define, which counts as a
+    need, as an undefined global does for `ld`. Two linked units that both hold `.ktext` fail with
+    `a.s and b.s both hold .ktext, ...`, on the second one's first kernel instruction. A unit whose
+    globals a `.macro`, `.rept`, `.irp` or `.if` block may make is taken only if it assembles on
+    its own and defines a name still needed. See [Several units](#several-units).
+*   **`pulseExternalInterrupt(code)`** sends an edge-triggered interrupt request, and a new
+    `BackStepAction`, `INTERRUPT_PULSES_RESTORE`, journals the pulses pending. See
+    [Interrupts](#interrupts-and-the-timer).
+*   **Calls and returns are part of the undo history**, so that `getCallStack()` after an `undo()`
+    shows what it showed before the step: two new `BackStepAction`s, `CALL_RESTORE` and
+    `RETURN_RESTORE`, take a call's frame off again and put a return's back. They change no value
+    the program sees; a host that handles every action needs a case for them.
+
 ## Migrating to 5.0.0
 
 5.0.0 plays MIDI out (31) and MIDI out synchronous (33) through the new `midiOut` handler. Like
@@ -498,6 +606,11 @@ with delayed branching off, so programs assemble with `expansion`.
 *   `setMemoryBytes(address: number, bytes: number[]): void`: Writes `bytes` to memory starting at `address`, the way the program does: write observers are notified and, while undo is enabled, an undo step is recorded per byte.
 *   `setPeripheralWord(address: number, value: number): void`: Writes one word-aligned word as a peripheral would, notifying no observer and recording no undo step. See [memory observers](#memory-observers).
 *   `addMemoryWriteObserver(startAddress: number, endAddress: number, handler): number`: Observes every write in an address range. See [memory observers](#memory-observers).
+*   `trackWrites(start: number, end: number): void`: Notes which 1 KB blocks of `[start, end)` stores write; `trackWrites(0, 0)` stops. See [written blocks](#written-blocks).
+*   `raiseExternalInterrupt(code: number): void` and `clearExternalInterrupt(code: number): void`: Raise and clear a device's level-triggered interrupt line, `0x40` the keyboard and `0x80` the display. See [interrupts](#interrupts).
+*   `getInterruptTaken(): Int32Array`: The interrupt the last run call took most recently, as the interrupted pc, the pending bits Status let through and the handler; empty when it took none.
+*   `takeWrittenBlocks(): Int32Array`: The blocks written since the last call, counted from the tracked range's start, in ascending order; empties the map.
+*   `readMemoryWords(address: number, count: number): Int32Array`: Reads `count` words from a word-aligned `address`, notifying no memory observer.
 *   `addMemoryAccessObserver(address: number, onRead, onWrite): number`: Observes reads and writes of one word. See [memory observers](#memory-observers).
 *   `removeMemoryObserver(handle: number): void`: Removes one registration.
 *   `removeMemoryObservers(): void`: Removes every registration.

@@ -80,8 +80,12 @@ public class Exceptions {
 		// keeping all the others. Left-shift by 2 to put cause value into position then
 		// OR it in. Bits 8-9 used to
 		// identify devices for External Interrupt (8=keyboard,9=display).
+		// The register's own value: the host's interrupt lines are pending in what a program reads,
+		// not in what the register holds, which this writes back. Bits 8 to 14 of the register hold
+		// what a device's pulse left for the handler of the last interrupt, cleared here as MARS
+		// clears bits 8 and 9.
 		Coprocessor0.updateRegister(Coprocessor0.CAUSE,
-				(Coprocessor0.getValue(Coprocessor0.CAUSE) & 0xFFFFFC83 | (cause << 2)));
+				(Coprocessor0.getStoredValue(Coprocessor0.CAUSE) & ~(0x7C | Coprocessor0.DEVICE_BITS) | (cause << 2)));
 		// When exception occurred, PC had already been incremented so need to subtract
 		// 4 here.
 		Coprocessor0.updateRegister(Coprocessor0.EPC,

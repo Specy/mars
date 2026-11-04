@@ -517,10 +517,10 @@ assert.equal(initialCoprocessor1.length, 32, 'the FPU file is $f0..$f31')
 assert.ok(initialCoprocessor1.every(value => value === 0), 'the FPU registers start cleared')
 
 const DEFAULT_STATUS_VALUE = 0x0000ff11
-assert.deepEqual(Array.from(MIPS_COPROCESSOR0_REGISTER_NUMBERS), [8, 12, 13, 14])
+assert.deepEqual(Array.from(MIPS_COPROCESSOR0_REGISTER_NUMBERS), [8, 9, 11, 12, 13, 14])
 const initialCoprocessor0 = Array.from(fpu.getCoprocessor0Values())
-assert.equal(initialCoprocessor0.length, 4, 'coprocessor 0 implements four registers')
-assert.deepEqual(initialCoprocessor0, [0, DEFAULT_STATUS_VALUE, 0, 0], 'status reads its default before any exception')
+assert.equal(initialCoprocessor0.length, 6, 'coprocessor 0 implements six registers')
+assert.deepEqual(initialCoprocessor0, [0, 0, 0, DEFAULT_STATUS_VALUE, 0, 0], 'status reads its default before any exception')
 assert.deepEqual(Array.from(fpu.getConditionFlags()), [0, 0, 0, 0, 0, 0, 0, 0])
 
 // Flag 3 is preset to 1 so that the false compare below has something to clear: 0 is also the
@@ -587,10 +587,14 @@ assert.equal(afterSetters[31], -1)
 assert.equal(afterSetters[12], singleBits(-2.25))
 
 fpu.setCoprocessor0Value(8, 0x00400020)
+fpu.setCoprocessor0Value(9, 77)
+fpu.setCoprocessor0Value(11, 99)
 fpu.setCoprocessor0Value(12, 0)
 fpu.setCoprocessor0Value(13, 0x18)
 fpu.setCoprocessor0Value(14, 0x00400000)
-assert.deepEqual(Array.from(fpu.getCoprocessor0Values()), [0x00400020, 0, 0x18, 0x00400000])
+assert.deepEqual(Array.from(fpu.getCoprocessor0Values()), [0x00400020, 77, 99, 0, 0x18, 0x00400000])
+fpu.setCoprocessor0Value(13, 0xff18)
+assert.equal(fpu.getCoprocessor0Values()[4], 0x18, "Cause's pending bits are the interrupt sources', not a setter's")
 
 fpu.setConditionFlag(7, true)
 fpu.setConditionFlag(0, true)
@@ -602,7 +606,7 @@ assert.equal(fpu.getUndoStack().length, undoStackBeforeSetters, 'a preset value 
 
 assert.throws(() => fpu.setCoprocessor1Value(32, 0), /FPU register index/)
 assert.throws(() => fpu.setCoprocessor1Value(-1, 0), /FPU register index/)
-assert.throws(() => fpu.setCoprocessor0Value(9, 0), /8, 12, 13 or 14/)
+assert.throws(() => fpu.setCoprocessor0Value(10, 0), /8, 9, 11, 12, 13 or 14/)
 assert.throws(() => fpu.setConditionFlag(8, true), /Condition flag/)
 // A fractional index is not an index: the JavaScript build hands the JS number through untouched, so
 // the range check rejects it rather than letting the array access fail with a raw TypeError. The
@@ -634,21 +638,21 @@ registerHandlers(trapping, Object.fromEntries(HANDLER_NAMES.map(name => [name, u
 const trappingAssembly = trapping.assemble()
 assert.equal(trappingAssembly.hasErrors, false, `exception program assembly failed: ${trappingAssembly.report}`)
 trapping.initialize(true)
-assert.deepEqual(Array.from(trapping.getCoprocessor0Values()), [0, DEFAULT_STATUS_VALUE, 0, 0])
+assert.deepEqual(Array.from(trapping.getCoprocessor0Values()), [0, 0, 0, DEFAULT_STATUS_VALUE, 0, 0])
 
 // With no exception handler installed, MARS reports the address error out of step() itself.
 await assert.rejects(() => trapping.step(), /not aligned/, 'the unaligned load should raise an address error')
 
 const trapped = Array.from(trapping.getCoprocessor0Values())
 assert.equal(trapped[0], 3, 'vaddr holds the address that faulted')
-assert.notEqual(trapped[2], 0, 'cause records the exception')
-assert.notEqual(trapped[3], 0, 'epc records the faulting instruction')
+assert.notEqual(trapped[4], 0, 'cause records the exception')
+assert.notEqual(trapped[5], 0, 'epc records the faulting instruction')
 
 assert.ok(trapping.canUndo, 'the exception should leave undo entries behind')
 while (trapping.canUndo) {
     trapping.undo()
 }
-assert.deepEqual(Array.from(trapping.getCoprocessor0Values()), [0, DEFAULT_STATUS_VALUE, 0, 0],
+assert.deepEqual(Array.from(trapping.getCoprocessor0Values()), [0, 0, 0, DEFAULT_STATUS_VALUE, 0, 0],
     'undo rolls every coprocessor 0 register back to its pre-exception value')
 
 
@@ -665,7 +669,7 @@ cell:   .word 0x0a0b0c0d
 main:
     li   $t0, 1
     li   $t1, 2
-    jal  helper             # one instruction, two back steps: $ra and the program counter
+    jal  helper             # one instruction, three back steps: $ra, the call frame and the program counter
     li   $v0, 10
     syscall
 helper:
@@ -689,14 +693,16 @@ await poking.step() // li $t0, 1
 await poking.step() // li $t1, 2
 await poking.step() // jal helper
 
-// The grouped history is what undo() pops: the jal is one entry, not the two back steps it records.
+// The grouped history is what undo() pops: the jal is one entry, not the three back steps it records.
 const afterJal = poking.getUndoGroups()
 assert.equal(afterJal.length, 3, 'three executed instructions are three entries')
 assert.deepEqual(groupKinds(poking), ['instruction', 'instruction', 'instruction'])
-assert.equal(afterJal[0].steps.length, 2, 'jal is one entry made of the $ra restore and the pc restore')
+assert.deepEqual(Array.from(afterJal[0].steps, step => step.action),
+    [BackStepAction.PC_RESTORE, BackStepAction.CALL_RESTORE, BackStepAction.REGISTER_RESTORE],
+    'jal is one entry made of the $ra restore, the call frame and the pc restore, newest first')
 assert.equal(afterJal[0].pc, 0x00400008, 'an instruction entry reports its own address')
 assert.deepEqual(Array.from(afterJal[0].writes), [], 'only a poke reports writes')
-assert.equal(poking.getUndoStack().length, 4, 'getUndoStack still reports one element per back step')
+assert.equal(poking.getUndoStack().length, 5, 'getUndoStack still reports one element per back step')
 
 // 2. Outside a transaction every setter is direct and records nothing, so a preset never becomes
 // an entry, and the host write is not reverted with the instruction that ran before it.
@@ -704,7 +710,7 @@ const stackBeforePresets = poking.getUndoStack().length
 const groupsBeforePresets = poking.getUndoGroups().length
 poking.setRegisterValue('$s0', 0x1111)
 poking.setCoprocessor1Value(4, 0x2222)
-poking.setCoprocessor0Value(13, 0x3333)
+poking.setCoprocessor0Value(13, 0x0033)
 poking.setConditionFlag(2, true)
 poking.setMemoryBytes(POKE_DATA, [9, 9, 9, 9])
 assert.equal(poking.getUndoStack().length, stackBeforePresets, 'a preset must not push a back step')
@@ -716,6 +722,7 @@ assert.deepEqual(Array.from(poking.readMemoryBytes(POKE_DATA, 4)), [9, 9, 9, 9],
     'undoing the instruction before it must not revert a host memory write')
 assert.equal(poking.getRegisterValue('$s0'), 0x1111, 'nor a host register write')
 assert.equal(poking.getUndoGroups().length, 2, 'the jal was one undo, so one entry is gone')
+assert.equal(poking.getCallStack().length, 0, 'and the frame it pushed is gone with it')
 pokeWrites.length = 0
 
 // 1. The transaction API.
@@ -740,8 +747,8 @@ assert.deepEqual(pokeWrites, [], 'a byte already holding the value is not even w
 // 4, 5 and 7. One transaction is one entry, at its place in the history, with its own identity:
 // never the address of an instruction, so that a host journal keyed by one is not popped by a poke.
 const pcBeforePoke = poking.programCounter
+// (call-stack-undo.mjs checks a poke against a call stack that holds frames)
 const callStackBeforePoke = poking.getCallStack().length
-assert.ok(callStackBeforePoke > 0, 'the jal left a frame to check the poke does not disturb')
 const t2BeforePoke = poking.getRegisterValue('$t2')
 
 const stackBeforePoke = poking.getUndoStack().length
@@ -776,7 +783,7 @@ assert.deepEqual(pokeGroup.writes, [
     // endPoke: $t0 was written twice and reports the first old value and the last new one.
     { type: 'register', name: '$t0', old: 1, new: 0x5678 },
     { type: 'register', name: '$f2', old: 0, new: 0x7f800000 | 0 },
-    { type: 'register', name: '$13 (cause)', old: 0x3333, new: 0x18 },
+    { type: 'register', name: '$13 (cause)', old: 0x0033, new: 0x18 },
     { type: 'register', name: 'flag 6', old: 0, new: 1 },
     { type: 'memory', address: POKE_DATA, old: [9, 9, 9, 9], new: [1, 2, 3, 4] },
 ], 'the entry reports every value it changed, old and new')
@@ -802,7 +809,7 @@ poking.undo()
 assert.equal(poking.getRegisterValue('$t0'), 1)
 assert.deepEqual(Array.from(poking.readMemoryBytes(POKE_DATA, 4)), [9, 9, 9, 9])
 assert.equal(poking.getCoprocessor1Values()[2], 0)
-assert.equal(poking.getCoprocessor0Values()[2], 0x3333)
+assert.equal(poking.getCoprocessor0Values()[4], 0x0033)
 assert.equal(poking.getConditionFlags()[6], 0)
 assert.equal(poking.programCounter, pcBeforePoke, 'undoing a poke leaves the program counter alone')
 assert.equal(poking.getCallStack().length, callStackBeforePoke, 'and the call stack')
@@ -1076,7 +1083,8 @@ assert.equal(mtc1Write.newValue, String(written.getCoprocessor1Values()[2]), 'th
 
 const mtc0Group = await stepAndGroup() // mtc0 $t0, $13
 const mtc0Write = stepOf(mtc0Group, BackStepAction.COPROC0_REGISTER_RESTORE)
-assert.deepEqual([mtc0Write.param1, mtc0Write.oldValue, mtc0Write.newValue], [13, '0', String(0x1234)])
+// Cause's pending bits, 8 to 15, are the interrupt sources': mtc0 writes the rest of it
+assert.deepEqual([mtc0Write.param1, mtc0Write.oldValue, mtc0Write.newValue], [13, '0', String(0x0034)])
 
 // 1. A condition flag and a do-nothing carry no written value, since neither restores one.
 const compareGroup = await stepAndGroup() // c.eq.s $f2, $f2
@@ -1087,7 +1095,10 @@ assert.equal(stepOf(nopGroup, BackStepAction.DO_NOTHING).newValue, '0', 'nor doe
 
 // 1. The program counter restore reports the address it puts back and the address the jal set.
 const jalGroup = await stepAndGroup() // jal helper
-assert.equal(jalGroup.steps.length, 2, 'the jal is the $ra restore and the pc restore')
+assert.equal(jalGroup.steps.length, 3, 'the jal is the $ra restore, the call frame and the pc restore')
+const callStep = stepOf(jalGroup, BackStepAction.CALL_RESTORE)
+assert.deepEqual([callStep.param1, callStep.oldValue, callStep.newValue], [written.programCounter, '0', '0'],
+    'the call frame names the address called, and carries no value the program wrote')
 const raWrite = stepOf(jalGroup, BackStepAction.REGISTER_RESTORE)
 assert.deepEqual([raWrite.param1, raWrite.oldValue, raWrite.newValue], [31, '0', String(written.getRegisterValue('$ra'))])
 const pcRestore = stepOf(jalGroup, BackStepAction.PC_RESTORE)

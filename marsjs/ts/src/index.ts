@@ -90,9 +90,13 @@ export type AssemblyOptions = {
      * and is searched before the libraries, so a unit's definition wins over a library's; the entry
      * symbol still comes from the library's start code. A unit the link takes is the program's own
      * code: its statements, labels and messages name its File, and its local labels and static
-     * names stay its own, so two units can both have a `$L2` or a static `counter`. Every unit is
-     * parsed and checked whether or not it is taken; one that another unit includes is part of that
-     * unit already. Only with the `gnu-compiler-v1` profile. See `JsMips.getLinkedUnits`.
+     * names stay its own, so two units can both have a `$L2` or a static `counter`. Which globals a
+     * unit defines is read from its `.globl`, `.global` and `.weak` lines and the labels they name
+     * before anything else, and only a unit the link takes is parsed: one nothing needs is never
+     * checked, so it may be in MARS's own dialect, or have mistakes, without failing the assembly.
+     * A unit that is taken and does not parse has a first error saying why the program links it and
+     * that it must be GNU assembly. One that another unit includes is part of that unit already.
+     * Only with the `gnu-compiler-v1` profile. See `JsMips.getLinkedUnits`.
      */
     units?: string[]
 }
@@ -440,11 +444,11 @@ export type MIPSAssembleResult = {
 
 /**
  * The coprocessor 0 register numbers, in the order `getCoprocessor0Values` returns their values
- * and `setCoprocessor0Value` names them: `$8 (vaddr)`, `$12 (status)`, `$13 (cause)`,
- * `$14 (epc)`. Coprocessor 0 implements only these four, so a register's number is not its
- * position in the array.
+ * and `setCoprocessor0Value` names them: `$8 (vaddr)`, `$9 (count)`, `$11 (compare)`,
+ * `$12 (status)`, `$13 (cause)`, `$14 (epc)`. Coprocessor 0 implements only these six, so a
+ * register's number is not its position in the array.
  */
-export const MIPS_COPROCESSOR0_REGISTER_NUMBERS = [8, 12, 13, 14] as const
+export const MIPS_COPROCESSOR0_REGISTER_NUMBERS = [8, 9, 11, 12, 13, 14] as const
 
 export class MIPS {
     public static readonly assemblerProfiles: readonly AssemblerProfile[] = Object.freeze(['mars', 'gnu-compiler-v1'])
@@ -595,9 +599,32 @@ export enum BackStepAction {
      * state is the simulator's own, so `oldValue` and `newValue` are `'0'`.
      */
     RANDOM_STREAM_RESTORE,
+    /**
+     * Whether the timer was on: `param1` is 1 or 0, what an undo puts back. The program's first
+     * write to Compare turns it on.
+     */
+    TIMER_ARMED_RESTORE,
+    /**
+     * The device pulses pending (`pulseExternalInterrupt`): `param1` is what an undo puts back,
+     * Cause's bits 8 to 14. A pulse sent during the instruction, or the interrupt that spent one,
+     * changed them. Interrupt bookkeeping, as a line is, rather than a value a program wrote.
+     */
+    INTERRUPT_PULSES_RESTORE,
     /** Internal heap and stack extent restores; no displayed mutation. */
     HEAP_RESTORE = 100,
     STACK_TOP_RESTORE,
+    /**
+     * A call (`jal`, `jalr`, `bal`, `bgezal`, `bltzal`) pushed a frame on the call stack: undoing it
+     * takes the frame off again. `param1` is the address it called. Debugger bookkeeping, not a
+     * value the program wrote, so `oldValue` and `newValue` are `'0'`.
+     */
+    CALL_RESTORE,
+    /**
+     * A return (`jr $ra`) popped a frame off the call stack: undoing it puts the frame back, so that
+     * `getCallStack` after an Undo shows what it showed before the step. `param1` is the address
+     * the frame had called; `oldValue` and `newValue` are `'0'`.
+     */
+    RETURN_RESTORE,
 }
 
 /**
@@ -940,10 +967,19 @@ export interface JsMips {
     setCoprocessor1Value(index: number, value: number): void;
 
     /**
-     * Gets the values of the four implemented coprocessor 0 registers, in the fixed order
-     * `$8 (vaddr)`, `$12 (status)`, `$13 (cause)`, `$14 (epc)` - the register numbers in
-     * `MIPS_COPROCESSOR0_REGISTER_NUMBERS`. `status` reads 0x0000FF11 until an exception
-     * changes it.
+     * Gets the values of the six implemented coprocessor 0 registers, in the fixed order
+     * `$8 (vaddr)`, `$9 (count)`, `$11 (compare)`, `$12 (status)`, `$13 (cause)`, `$14 (epc)` -
+     * the register numbers in `MIPS_COPROCESSOR0_REGISTER_NUMBERS`. `status` reads 0x0000FF11
+     * until an exception changes it.
+     *
+     * Each is the value a program's `mfc0` reads now. `count` goes up once every two instructions
+     * executed, from 0 at `initialize`, and goes back with `undo()`; it is MIPS32's Count, which
+     * MARS 4.5 does not have, nor `compare`. When Count goes up to Compare's value, `cause` gets its
+     * timer bit, IP7 (0x8000), which a write to Compare clears (a write that makes the two equal
+     * sets it at once only on an even-numbered instruction of the run, the moment Count would
+     * reach the value by counting; see the README); the timer is off until the program
+     * first writes Compare. `cause`'s bits 8 and 9 are the lines `raiseExternalInterrupt` raised and
+     * the pulses `pulseExternalInterrupt` sent.
      *
      * Each element is a signed 32 bit int, exactly like `getRegistersValues`: a value with the
      * top bit set reads back negative, so use `value >>> 0` for its unsigned form. The array
@@ -954,14 +990,61 @@ export interface JsMips {
     getCoprocessor0Values(): number[];
 
     /**
-     * Sets one coprocessor 0 register. Outside a Poke the write is direct: it records no undo step.
-     * Inside a Poke it joins the open transaction.
+     * Sets one coprocessor 0 register, as `mtc0` writes it: Count then reads `value` and counts on
+     * from it, Compare turns the timer on and clears its pending bit, and Cause keeps its pending
+     * bits, 8 to 15, which belong to the interrupt sources. Outside a Poke the write is direct: it
+     * records no undo step. Inside a Poke it joins the open transaction.
      * @param number The register number, one of `MIPS_COPROCESSOR0_REGISTER_NUMBERS`
-     * (8, 12, 13 or 14). Any other number throws. This is the register's MIPS number, not its
+     * (8, 9, 11, 12, 13 or 14). Any other number throws. This is the register's MIPS number, not its
      * position in `getCoprocessor0Values()`.
      * @param value The 32 bit value to store.
      */
     setCoprocessor0Value(number: number, value: number): void;
+
+    /**
+     * Raises the level-triggered interrupt line of a device. `code` is MARS's: 0x40 for the
+     * keyboard receiver and 0x80 for the display transmitter, Cause's pending bits 8 and 9 shifted
+     * right twice, which is what a handler finds in Cause. The interrupt is taken when Status
+     * allows it (interrupts enabled, bit 0; no exception being handled, EXL, bit 1; the bit
+     * unmasked in bits 8 to 15), between two instructions, as a step of its own that one `undo()`
+     * takes back: the program counter goes to the exception handler at 0x80000180 and EPC holds
+     * the interrupted instruction, which has not run. The line stays pending, so the interrupt is
+     * taken again after every `eret`, until `clearExternalInterrupt` clears it: raise it for as long
+     * as the device asks, a character waiting for example. An `undo()` leaves the lines alone, so
+     * state them again after one; `initialize` clears them all.
+     */
+    raiseExternalInterrupt(code: number): void;
+
+    /**
+     * Clears a device's interrupt line, see `raiseExternalInterrupt`, and withdraws a pulse of the
+     * device that no interrupt has taken yet, see `pulseExternalInterrupt`.
+     */
+    clearExternalInterrupt(code: number): void;
+
+    /**
+     * Sends one interrupt request from a device, edge-triggered, as MARS's display transmitter
+     * requests one each time it becomes ready: `code` as for `raiseExternalInterrupt`. The request
+     * is pending, and shows in Cause's bit 8 or 9, until an interrupt takes it, however long Status
+     * keeps it waiting (interrupts disabled, EXL set or the bit masked); a second pulse of the same
+     * device before then is the same request. Taking it spends it, so it is not taken again after
+     * `eret`. The handler finds the device's bit in Cause, as MARS leaves it there, until the next
+     * exception or interrupt is entered or the program writes the bit as 0 with `mtc0`; that bit
+     * asks for nothing more. Unlike a line, a pulse is part of the Undo history: one sent during an
+     * instruction (from a memory observer, say) or a Poke is undone with it, and undoing the
+     * interrupt that spent it makes it pending again, so stepping forward takes it at the same
+     * place. One sent between two instructions, outside a Poke, records nothing. `clearExternalInterrupt`
+     * withdraws a pending pulse, and `initialize` clears them all.
+     */
+    pulseExternalInterrupt(code: number): void;
+
+    /**
+     * The interrupt the last run call took most recently, as `[pc, pending, handler]`: the address
+     * of the instruction it interrupted, which EPC holds and which has not run, the pending bits
+     * Status let through (Cause's bits 8 to 15: 0x8000 the timer, 0x100 the keyboard, 0x200 the
+     * display) and the handler it entered. Empty when the call took none, so after `step()` it says
+     * whether that step was an interrupt.
+     */
+    getInterruptTaken(): Int32Array;
 
 
     /**
@@ -1003,7 +1086,8 @@ export interface JsMips {
     getLinkedUnits(): string[]
     /**
      * Every File the last assembly read for the program's own units, the entry file's and those it
-     * includes, then every unit of `AssemblyOptions.units`, linked or not.
+     * includes, then those of each unit of `AssemblyOptions.units` the link took. A unit it did not
+     * take is never read.
      */
     getUnitFiles(): string[]
     /**
@@ -1258,7 +1342,48 @@ export interface JsMips {
     setPeripheralWord(address: number, value: number): void;
 
     /**
-     * Observes every write in an address range, the shape a framebuffer wants.
+     * Starts noting which 1 KB blocks of `[start, end)` are written, for a host that mirrors that
+     * range, such as a framebuffer: it calls `takeWrittenBlocks` once per update and reads only those
+     * blocks with `readMemoryWords`, instead of being called on every store as a write observer is.
+     *
+     * Every store marks the map: the program's stores of every width, the services that write
+     * memory, `setMemoryBytes`, Pokes and `setPeripheralWord`, and the restores of `undo()`, so after
+     * an `undo()` the map names exactly the blocks it changed. A store straddling two blocks marks
+     * both.
+     *
+     * One range is tracked at a time, on the simulator's memory, which every `JsMips` shares: a call
+     * replaces the range any instance set before, and forgets what was written. `start === end`
+     * stops tracking. The range survives `assemble()` and `initialize()`, as observers do;
+     * assembling forgets what was written before it. Either form of a high address is accepted, and
+     * `end` may be `0` for a range reaching the top of memory. Throws if the range ends before it
+     * starts or is 2 GB or longer.
+     * @param start The first address tracked.
+     * @param end The address after the last one tracked.
+     */
+    trackWrites(start: number, end: number): void;
+
+    /**
+     * The blocks of the tracked range written since the last call, in ascending order, counted from
+     * the range's start: block `n` holds the bytes from `start + n * 1024`. The map is empty
+     * afterwards. Empty when nothing was written or nothing is tracked.
+     */
+    takeWrittenBlocks(): Int32Array;
+
+    /**
+     * Reads `count` words from a word-aligned address the way `readMemoryBytes` reads bytes: no
+     * observer is notified, and the text segments read as the encodings of the statements they hold.
+     * Each element is the signed 32 bit word a load of it reads, so a pixel `0x00RRGGBB` arrives as
+     * that number. Either form of a high address is accepted. Throws if the address is not on a
+     * word boundary or a word is outside the simulator's memory.
+     * @param address The first word's address.
+     * @param count How many words to read.
+     */
+    readMemoryWords(address: number, count: number): Int32Array;
+
+    /**
+     * Observes every write in an address range, as it happens: the shape a device that acts on a
+     * store wants. A host that only mirrors a range, such as a framebuffer, does better with
+     * `trackWrites`, which costs no call out of the simulator per store.
      *
      * Both addresses must be word-aligned, `endAddress` is inclusive and covers its whole word, and
      * the range may not cross 0x80000000 (split it in two registrations instead); a range that

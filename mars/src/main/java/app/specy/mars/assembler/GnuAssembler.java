@@ -23,8 +23,11 @@ import java.util.regex.*;
  * <p>
  * The program's other units form an archive, as a library's members do: the link takes one only
  * when it defines a global the program still needs, searching it before the library, and a unit
- * it takes stays the program's own code. A unit's parse is kept by its exact text (see
- * {@link Preparation}), so a unit that has not changed since the last assembly is not parsed again.
+ * it takes stays the program's own code. Which globals a unit defines is read from its text before
+ * anything else ({@link Declarations}), so a unit the program does not need is never prepared or
+ * parsed, and its mistakes, or a dialect other than GNU's, cannot fail the Build. A unit's parse is
+ * kept by its exact text (see {@link Preparation}), so a unit that has not changed since the last
+ * assembly is not parsed again.
  * <p>
  * MARS runs with delayed branching off: a taken branch never executes the instruction after it,
  * and a link saves the address of that instruction. Code assembled with {@code .set noreorder}
@@ -35,12 +38,21 @@ import java.util.regex.*;
  */
 public final class GnuAssembler {
     private static final int MAX_BYTES = 16 * 1024 * 1024;
+    /**
+     * The most a zeroed section (.bss, common symbols) may reserve. Nothing of it is emitted, so the
+     * 16 MiB emission limit does not count it; the data segment's end, 64 MB from its base, is what
+     * bounds it (requireStaticDataFits). This only keeps the sizes within an int.
+     */
+    private static final int MAX_RESERVED_BYTES = 1 << 30;
     /** The page size the heap is aligned to when it follows static data, as a kernel aligns the break. */
     private static final long PAGE_BYTES = 4096;
     private static final BigInteger ZERO = BigInteger.ZERO, ONE = BigInteger.ONE;
-    // Section families, in layout order. Text is the only executable family, writable
-    // families start at INIT and zeroed ones at BSS.
-    private static final int TEXT = 0, RODATA = 1, INIT = 2, FINI = 3, DATA = 4, BSS = 5, COMMON = 6;
+    // Section families, in layout order. TEXT to COMMON are the user program's: text is executable,
+    // writable families start at INIT and zeroed ones at BSS. KTEXT and KDATA are the kernel's, laid
+    // out on their own from MARS's exception handler address and kernel data base: .ktext holds the
+    // exception and interrupt handler, as in MARS's own dialect.
+    private static final int TEXT = 0, RODATA = 1, INIT = 2, FINI = 3, DATA = 4, BSS = 5, COMMON = 6,
+            KTEXT = 7, KDATA = 8;
     private static final String NAME_TEXT = "[.$A-Za-z_][.$A-Za-z_0-9]*";
     private static final Pattern NAME = Pattern.compile(NAME_TEXT);
     private static final Pattern LABEL = Pattern.compile("^(" + NAME_TEXT + "|[0-9]+)\\s*:");
@@ -57,6 +69,8 @@ public final class GnuAssembler {
     private static final Pattern SYMBOL_TYPE = Pattern.compile("[@%](function|object|notype|gnu_unique_object)");
     private static final Pattern IGNORED_CFI = Pattern.compile("\\.cfi_(startproc|endproc|def_cfa_offset|def_cfa|def_cfa_register|offset|restore|remember_state|restore_state|sections|undefined|same_value|return_column|signal_frame|adjust_cfa_offset|escape)");
     private static final Pattern TEXT_SECTION = Pattern.compile("\\.text(?:\\..*)?");
+    private static final Pattern KTEXT_SECTION = Pattern.compile("\\.ktext(?:\\..*)?");
+    private static final Pattern KDATA_SECTION = Pattern.compile("\\.kdata(?:\\..*)?");
     private static final Pattern RODATA_SECTION = Pattern.compile("\\.(rodata|srodata|rdata)(?:\\..*)?");
     private static final Pattern DATA_SECTION = Pattern.compile("\\.(data|sdata)(?:\\..*)?");
     private static final Pattern BSS_SECTION = Pattern.compile("\\.(bss|sbss)(?:\\..*)?");
@@ -74,6 +88,8 @@ public final class GnuAssembler {
     /** Immediates the instruction zero-extends, so a %lo field is written as its unsigned half. */
     private static final Pattern UNSIGNED_IMMEDIATE = Pattern.compile("andi|ori|xori");
     private static final Pattern CONDITION_CODE = Pattern.compile("\\$fcc([0-7])");
+    /** A register named by its number alone, as GNU as names coprocessor registers: $31. */
+    private static final Pattern NUMBERED_REGISTER = Pattern.compile("\\$([0-9]|[12][0-9]|3[01])");
     /** A constructor or destructor array section with an explicit priority. */
     private static final Pattern PRIORITIZED_ARRAY = Pattern.compile("\\.(?:init|fini)_array\\.(\\d{1,5})");
     /** A lowered conditional branch: its operation, its operands before the target, and its target. */
@@ -100,7 +116,8 @@ public final class GnuAssembler {
     /** An operand or expression atom: a number, which is skipped, or a name; a leading % marks an address modifier. */
     private static final Pattern REFERENCE = Pattern.compile("0[xX][0-9a-fA-F]+|[0-9]+[bf]?|%?[.$A-Za-z_][.$A-Za-z_0-9]*");
 
-    private final ErrorList errors = new ErrorList();
+    /** What this assembly reports; a trial parse of an archive unit swaps in a list of its own. */
+    private ErrorList errors = new ErrorList();
     /** The units the link takes, in layout order: the program's own, then the library's members. */
     private final List<Unit> units = new ArrayList<>();
     /** The entry units, which are always linked: the program and what it includes. */
@@ -108,14 +125,16 @@ public final class GnuAssembler {
     /** Where the archive's units are read from, and their paths in archive order. */
     private final MIPSFileSystem files;
     private final List<String> archivePaths;
-    /** The archive's units the link has not taken, in archive order. */
-    private final List<Unit> archive = new ArrayList<>();
+    /** The archive's units the link has not taken, in archive order, as their text declares them. */
+    private final List<Declarations> archive = new ArrayList<>();
     /** The archive's unit that defines each global: the first in archive order, as ld would find it. */
-    private final Map<String, Unit> archiveIndex = new HashMap<>();
-    private final Map<Unit, Integer> archiveOrder = new HashMap<>();
+    private final Map<String, Declarations> archiveIndex = new HashMap<>();
+    /** Each archive unit's place in archive order, by its File, and that of each unit the link took. */
+    private final Map<String, Integer> archiveOrder = new HashMap<>();
+    private final Map<Unit, Integer> unitOrder = new HashMap<>();
     /** How many of {@link #units} are the program's own, which come before the library's members. */
     private int ownUnits;
-    /** The entry units' programs and the archive's, for their source lines and tokens. */
+    /** The entry units' programs and those of the archive's units the link took, for their source lines and tokens. */
     private final List<MIPSprogram> unitPrograms = new ArrayList<>();
     /** The Files whose units this assembly parsed from their text rather than took from the cache. */
     private final Set<String> assembled = new LinkedHashSet<>();
@@ -158,9 +177,9 @@ public final class GnuAssembler {
         Section(Unit unit, String name, String flags, String type, String entrySize, String group, int family) {
             this.unit = unit; this.name = name; this.flags = flags; this.type = type; this.family = family;
             this.entrySize = entrySize; this.group = group;
-            alignment = family == TEXT ? 4 : 1;
+            alignment = executableFamily(family) ? 4 : 1;
         }
-        boolean executable() { return family == TEXT; }
+        boolean executable() { return executableFamily(family); }
         boolean discarded() { return family < 0 || duplicateGroup; }
         boolean zeroed() { return type.equals("@nobits"); }
     }
@@ -277,9 +296,10 @@ public final class GnuAssembler {
     /**
      * Also takes the program's other units, the canonical paths in {@code files} of GNU compiler
      * assembly, as an archive's members: each is linked only when it defines a global the program
-     * still needs, and then as the program's own code, with its own local symbols. Every one is
-     * parsed, so its mistakes are reported whether or not the link takes it. A unit that another
-     * unit includes is already part of that one, and is no member of its own.
+     * still needs, and then as the program's own code, with its own local symbols. Need is found
+     * from each unit's global declarations before it is prepared, so a unit the link does not take
+     * is never parsed and its mistakes are not reported. A unit that another unit includes is
+     * already part of that one, and is no member of its own.
      */
     public GnuAssembler(List<MIPSprogram> programs, MIPSFileSystem files, List<String> archive,
                         RuntimeLibrary library, String entrySymbol) {
@@ -298,7 +318,7 @@ public final class GnuAssembler {
         for (int i = 0; i < ownUnits; i++) paths.add(units.get(i).program.getFilename());
         return paths;
     }
-    /** The entry units' programs, then the archive's, as far as they were read: linked or not. */
+    /** The entry units' programs, then those of the archive's units the link took and could read. */
     public List<MIPSprogram> unitPrograms() { return Collections.unmodifiableList(unitPrograms); }
     /**
      * The Files whose units this assembly parsed from their text, the program's own and the
@@ -525,9 +545,9 @@ public final class GnuAssembler {
         }
         ownUnits = units.size();
         readArchive();
-        fail();
         Set<String> required = new LinkedHashSet<>();
         if (entrySymbol != null) required.add(entrySymbol);
+        // pulled even when the entry units have mistakes, so the units they need report theirs too
         resolveMembers(required);
         return link(Integer.toUnsignedLong(Memory.textBaseAddress), Integer.toUnsignedLong(Memory.dataBaseAddress));
     }
@@ -549,8 +569,9 @@ public final class GnuAssembler {
     }
 
     /**
-     * Pulls library members until every strong global the units use is defined or no member
-     * defines it, in rounds, so the link order is the order members were first needed.
+     * Pulls archive units and library members until every strong global the units use is defined
+     * or nothing defines it, in rounds, so the link order is the order members were first needed.
+     * The mistakes of every unit pulled are reported together, once nothing more is needed.
      */
     private void resolveMembers(Set<String> required) throws ProcessingException {
         if (library == null && archive.isEmpty()) return;
@@ -588,56 +609,273 @@ public final class GnuAssembler {
                     for (ErrorMessage message : exception.errors().getErrorMessages()) errors.add(message);
                 }
             }
-            fail();
+            if (!pulled) pulled = takeUncertain(wanted, defined);
+        }
+        fail();
+    }
+
+    /**
+     * The last resort for names nothing has defined once the rounds are done: the archive's units
+     * whose text a scan cannot read for certain ({@link Declarations#uncertain}), because a macro,
+     * a repetition or a conditional may define globals the scan does not see, or may not define
+     * the ones it does, are each parsed on their own, in archive order, and one is linked only when
+     * it parses cleanly and its own symbol table defines a name still needed. One that does not
+     * parse is never part of the program, and nothing it says is reported: a definition seen only
+     * inside a conditional that is false, or a dialect this profile cannot read, never fails the
+     * Build. Returns whether one was linked.
+     */
+    private boolean takeUncertain(Set<String> wanted, Set<String> defined) {
+        Set<String> missing = new LinkedHashSet<>();
+        for (String name : wanted) {
+            if (defined.contains(name)) continue;
+            if (legacyGlobals && Globals.symbolTable.getAddress(name) != SymbolTable.NOT_FOUND) continue;
+            missing.add(name);
+        }
+        if (missing.isEmpty()) return false;
+        for (Declarations member : new ArrayList<>(archive)) {
+            if (!member.uncertain) continue;
+            Unit unit = trialUnit(member.path);
+            // a unit that cannot be read is tried once: it stays out of the archive
+            if (unit == null) { archive.remove(member); continue; }
+            boolean needed = false;
+            for (String name : unit.definedGlobals()) needed |= missing.contains(name);
+            if (!needed) continue;
+            archive.remove(member);
+            placeMember(member, unit, defined);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * {@code path} parsed as a unit on its own, with what it reports kept apart from this
+     * assembly's; null when it reported any error.
+     */
+    private Unit trialUnit(String path) {
+        ErrorList own = errors;
+        errors = new ErrorList();
+        boolean parsedBefore = assembled.contains(path);
+        try {
+            MIPSprogram program = new MIPSprogram();
+            program.prepareForAssembly(path, files, AssemblerProfile.GNU_COMPILER_V1);
+            Unit unit = unit(program, false, Set.of());
+            if (errors.errorsOccurred()) {
+                if (!parsedBefore) assembled.remove(path);
+                return null;
+            }
+            for (ErrorMessage message : errors.getErrorMessages()) own.add(message);
+            unitPrograms.add(program);
+            return unit;
+        } catch (ProcessingException | RuntimeException exception) {
+            if (!parsedBefore) assembled.remove(path);
+            return null;
+        } finally {
+            errors = own;
         }
     }
 
     /**
      * Links the archive's unit that defines {@code name}, when there is one the link has not taken:
      * among the program's own units, in archive order, so a unit's place does not depend on which
-     * reference pulled it first. What it defines is then defined, as for ld, so another unit that
-     * defines the same name is not pulled for it.
+     * reference pulled it first. Only now is the unit prepared and parsed. What it defines is then
+     * defined, as for ld, so another unit that defines the same name is not pulled for it; a unit
+     * that could not be read defines what its declarations say, so nothing else is pulled in its
+     * place. A unit with mistakes says first why it is part of the program, and so why it is
+     * assembled as GNU assembly.
      */
     private boolean take(String name, Set<String> defined) {
-        Unit unit = archiveIndex.get(name);
-        if (unit == null || !archive.remove(unit)) return false;
-        int at = programs.size(), order = archiveOrder.get(unit);
-        while (at < ownUnits && archiveOrder.get(units.get(at)) < order) at++;
-        units.add(at, unit);
-        ownUnits++;
-        defined.addAll(unit.definedGlobals());
+        Declarations member = archiveIndex.get(name);
+        if (member == null || !archive.contains(member)) return false;
+        linkMember(member, member.declarations.get(name), linkedDialectMessage(member.path, name), defined);
         return true;
     }
 
     /**
-     * Reads and parses every unit of the archive, so each reports its mistakes whether or not the
-     * link takes it, and indexes the globals each defines. A unit that another unit, or the
-     * program, includes is part of that unit already.
+     * Links one unit of the archive, as {@link #take} explains; {@code why} is the line that makes
+     * the program need it, where {@code explanation} is reported if the unit has mistakes.
+     */
+    private void linkMember(Declarations member, SourceLocation why, String explanation, Set<String> defined) {
+        archive.remove(member);
+        int reported = errors.getErrorMessages().size();
+        Unit unit = null;
+        try {
+            MIPSprogram program = new MIPSprogram();
+            program.prepareForAssembly(member.path, files, AssemblerProfile.GNU_COMPILER_V1);
+            unitPrograms.add(program);
+            unit = unit(program, false, Set.of());
+        } catch (ProcessingException exception) {
+            for (ErrorMessage message : exception.errors().getErrorMessages()) errors.add(message);
+        }
+        List<ErrorMessage> messages = errors.getErrorMessages();
+        for (int i = reported; i < messages.size(); i++) {
+            if (messages.get(i).isWarning()) continue;
+            errors.add(new ErrorMessage(why.getSourcePath(), why.getSourceLine(), 1, explanation), reported);
+            break;
+        }
+        if (unit == null) {
+            defined.addAll(member.defined);
+            return;
+        }
+        placeMember(member, unit, defined);
+    }
+
+    /** Puts a unit the link takes from the archive in its place among the program's own units. */
+    private void placeMember(Declarations member, Unit unit, Set<String> defined) {
+        int at = programs.size(), order = archiveOrder.get(member.path);
+        while (at < ownUnits && unitOrder.get(units.get(at)) < order) at++;
+        unitOrder.put(unit, order);
+        units.add(at, unit);
+        ownUnits++;
+        defined.addAll(unit.definedGlobals());
+    }
+
+    /**
+     * Why a unit the program needs is assembled as GNU assembly, which its mistakes may come from:
+     * a File written in MARS's own dialect, such as an exercise, which the program uses because it
+     * declares one of the program's globals.
+     */
+    static String linkedDialectMessage(String path, String name) {
+        String file = path.substring(path.lastIndexOf('/') + 1);
+        return file + " is linked into this program because it defines " + name + ", which the program uses. "
+                + "This program is assembled as GNU assembly, the syntax C compiles to, so " + file
+                + " must be written in GNU syntax too, not in MARS's.";
+    }
+
+    /**
+     * Reads which globals each unit of the archive defines from its text, without preparing or
+     * parsing it, and indexes them. A unit that another unit, or the program, includes is part of
+     * that unit already.
      */
     private void readArchive() {
-        List<MIPSprogram> read = new ArrayList<>();
-        for (String path : archivePaths) {
-            try {
-                MIPSprogram program = new MIPSprogram();
-                program.prepareForAssembly(path, files, AssemblerProfile.GNU_COMPILER_V1);
-                read.add(program);
-            } catch (ProcessingException exception) {
-                for (ErrorMessage message : exception.errors().getErrorMessages()) errors.add(message);
-            }
-        }
         Set<String> included = new HashSet<>();
-        List<MIPSprogram> every = new ArrayList<>(programs);
-        every.addAll(read);
-        for (MIPSprogram program : every)
+        for (MIPSprogram program : programs)
             for (SourceLine line : program.getSourceLineList())
                 if (!line.getSourcePath().equals(program.getFilename())) included.add(line.getSourcePath());
-        for (MIPSprogram program : read) {
-            if (included.contains(program.getFilename())) continue;
-            unitPrograms.add(program);
-            Unit unit = unit(program, false, Set.of());
-            archiveOrder.put(unit, archive.size());
-            archive.add(unit);
-            for (String name : unit.definedGlobals()) archiveIndex.putIfAbsent(name, unit);
+        List<Declarations> read = new ArrayList<>();
+        for (String path : archivePaths) {
+            Declarations declarations = Declarations.read(path, files);
+            read.add(declarations);
+            included.addAll(declarations.includes);
+        }
+        for (Declarations member : read) {
+            if (included.contains(member.path)) continue;
+            archiveOrder.put(member.path, archive.size());
+            archive.add(member);
+            for (String name : member.defined) archiveIndex.putIfAbsent(name, member);
+        }
+    }
+
+    /**
+     * Why two units the link takes cannot both hold .ktext: an exception handler starts at
+     * 0x80000180, where MIPS enters it, and only one can. A unit holding .ktext is linked as any
+     * other is, when the program needs a global it defines (a C program names its handler with
+     * SIM_LINK, which declares it global), so units the link does not take are never compared.
+     */
+    static String twoHandlersMessage(String first, String second) {
+        String a = first.substring(first.lastIndexOf('/') + 1), b = second.substring(second.lastIndexOf('/') + 1);
+        return a + " and " + b + " both hold .ktext, an exception handler, and a program has room for one, at 0x80000180, "
+                + "where MIPS enters it: keep the handler in one of them.";
+    }
+
+    /**
+     * What a quick read of a unit's text says, before the unit is prepared or parsed: the globals
+     * it defines, which are the names its {@code .globl}, {@code .global} and {@code .weak} lines
+     * declare that a label, an assignment or a common allocation of the unit also defines, as
+     * {@link Unit#definedGlobals} has them once parsed, and the Files its {@code .include}s read,
+     * whose lines are the unit's too. It is read the way the parser reads a line, comments and
+     * labels first, and a line it cannot read declares nothing: the parse, if the link takes the
+     * unit, reports it. A File in another dialect is read the same way, since MARS's own
+     * {@code .globl} and labels are written as GNU's.
+     * <p>
+     * Nothing between a {@code .macro}, {@code .rept}, {@code .irp}, {@code .irpc} or {@code .if}
+     * family line and its end counts: a macro's body defines nothing until it is used, and a
+     * conditional's lines may never be assembled. A unit with any of them is {@link #uncertain},
+     * since a macro used elsewhere may define a global the scan cannot see; the link parses such a
+     * unit in full before it takes one for a name nothing else defines.
+     */
+    static final class Declarations {
+        final String path;
+        /** The globals the unit defines, in the order it first declares them. */
+        final List<String> defined = new ArrayList<>();
+        /** Where each name the unit declares global is first declared. */
+        final Map<String, SourceLocation> declarations = new LinkedHashMap<>();
+        /** The Files the unit's includes read, its own excepted. */
+        final Set<String> includes = new LinkedHashSet<>();
+        /** Whether a macro, a repetition or a conditional may define what this scan cannot read. */
+        boolean uncertain;
+
+        private Declarations(String path) { this.path = path; }
+
+        static Declarations read(String path, MIPSFileSystem files) {
+            Declarations declarations = new Declarations(path);
+            Set<String> symbols = new HashSet<>();
+            declarations.scan(path, files, new ArrayList<>(), symbols, 0);
+            for (String name : declarations.declarations.keySet()) if (symbols.contains(name)) declarations.defined.add(name);
+            return declarations;
+        }
+
+        /**
+         * Reads one File of the unit; {@code depth} is how many macro, repetition and conditional
+         * blocks the line that includes it is inside, whose lines define nothing for certain.
+         */
+        private void scan(String file, MIPSFileSystem files, List<String> stack, Set<String> symbols, int depth) {
+            if (stack.size() >= 64 || stack.contains(file)) return;
+            String text;
+            try { text = files.read(file); } catch (RuntimeException exception) { return; }
+            stack.add(file);
+            String[] lines = text.split("\n", -1);
+            int outer = depth;
+            for (int i = 0; i < lines.length; i++) {
+                String line = uncomment(lines[i]).trim();
+                Matcher label = LABEL.matcher(line);
+                while (label.find()) {
+                    if (depth == 0) symbols.add(label.group(1));
+                    line = line.substring(label.end()).trim();
+                    label = LABEL.matcher(line);
+                }
+                if (line.isEmpty()) continue;
+                int split = line.indexOf(' '), tab = line.indexOf('\t');
+                if (split < 0 || tab >= 0 && tab < split) split = tab;
+                String op = split < 0 ? line : line.substring(0, split);
+                String rest = split < 0 ? "" : line.substring(split).trim();
+                if (opensBlock(op)) { depth++; uncertain = true; continue; }
+                if (closesBlock(op)) { if (depth > outer) depth--; continue; }
+                Matcher assignment = ASSIGNMENT.matcher(line), alias = SET_DIRECTIVE.matcher(line);
+                if (assignment.matches()) { if (depth == 0) symbols.add(assignment.group(1)); continue; }
+                if (alias.matches()) { if (depth == 0) symbols.add(alias.group(1)); continue; }
+                try {
+                    if (op.equals(".globl") || op.equals(".global") || op.equals(".weak")) {
+                        if (depth > 0) continue;
+                        for (String name : arguments(rest))
+                            if (matches(NAME, name)) declarations.putIfAbsent(name, new SourceLocation(file, i + 1));
+                    } else if (op.equals(".comm") || op.equals(".lcomm")) {
+                        List<String> args = arguments(rest);
+                        if (depth == 0 && !args.isEmpty() && matches(NAME, args.get(0))) symbols.add(args.get(0));
+                    } else if (INCLUDE.matcher(line).matches()) {
+                        List<String> args = arguments(line.substring(8));
+                        if (args.size() != 1) continue;
+                        String included = SourcePath.resolveInclude(file, unquote(args.get(0)));
+                        if (!included.equals(path)) includes.add(included);
+                        scan(included, files, stack, symbols, depth);
+                    }
+                } catch (RuntimeException exception) {
+                    // the parse reports what this line means, if the link takes the unit
+                }
+            }
+            stack.remove(stack.size() - 1);
+        }
+
+        /** A line that starts a macro's body, a repetition or a conditional: GNU's, and MARS's .macro. */
+        private static boolean opensBlock(String op) {
+            if (op.equals(".macro") || op.equals(".rept") || op.equals(".irp") || op.equals(".irpc")) return true;
+            if (!op.startsWith(".if")) return false;
+            for (int i = 1; i < op.length(); i++) if (!Character.isLetter(op.charAt(i))) return false;
+            return true;
+        }
+
+        /** A line that ends one: GNU's .endm, .endr and .endif, and MARS's .end_macro. */
+        private static boolean closesBlock(String op) {
+            return op.equals(".endm") || op.equals(".end_macro") || op.equals(".endr") || op.equals(".endif");
         }
     }
 
@@ -734,6 +972,9 @@ public final class GnuAssembler {
     /** As {@link #require(boolean, String)}, joining the message only when it is thrown: these run for every statement. */
     private static void require(boolean condition, String message, String detail) { if (!condition) throw new Invalid(message + detail); }
     private static boolean matches(Pattern pattern, String text) { return pattern.matcher(text).matches(); }
+    private static boolean executableFamily(int family) { return family == TEXT || family == KTEXT; }
+    private static boolean writableFamily(int family) { return family >= INIT && family <= COMMON || family == KDATA; }
+    private static boolean zeroedFamily(int family) { return family == BSS || family == COMMON; }
     /** The array family whose bound ld provides under this name when nothing defines it, or -1. */
     private static int arrayBound(String name) {
         switch (name) {
@@ -788,13 +1029,15 @@ public final class GnuAssembler {
                 if (family == TEXT) require(end <= 0xffffffffL && (section.size == 0 || Memory.inTextSegment((int)(end - 1))), "Section exceeds mapped memory: ", section.name);
                 else if (section.size != 0) requireStaticDataFits(end);
                 if (family == TEXT) text = end; else data = end;
-                total += section.size;
+                // a zeroed section emits nothing: only the data segment's end bounds it
+                if (!section.zeroed()) total += section.size;
             }
             if (range != null) {
                 if (range.base == 0) range.base = data;
                 range.size = (int)(data - range.base);
             }
         }
+        total += layoutKernel();
         require(total <= MAX_BYTES, "Assembly exceeds 16 MiB emission limit");
         long heapBase = Integer.toUnsignedLong(Memory.heapBaseAddress);
         if (legacyGlobals) {
@@ -808,8 +1051,51 @@ public final class GnuAssembler {
     }
 
     /**
+     * Places the kernel's sections, .ktext from the exception handler address, 0x80000180, where
+     * an exception or interrupt enters it, and .kdata from the kernel data base, 0x90000000, each
+     * family in unit order, apart from the user program. Returns the bytes they take.
+     */
+    private long layoutKernel() {
+        long total = 0;
+        long text = Integer.toUnsignedLong(Memory.exceptionHandlerAddress), data = Integer.toUnsignedLong(Memory.kernelDataBaseAddress);
+        Unit handler = null;
+        for (int family = KTEXT; family <= KDATA; family++) {
+            for (Unit unit : units) for (Section section : unit.sections.values()) {
+                if (section.family != family || section.discarded()) continue;
+                if (family == KTEXT && section.size > 0) {
+                    // the handler must start at 0x80000180, so a second unit's would land elsewhere:
+                    // reported at that unit's first kernel instruction
+                    if (handler != null && handler != unit) {
+                        int line = section.fragments.isEmpty() ? 1 : section.fragments.get(0).line;
+                        errors.add(new ErrorMessage(unit.program, line, 1,
+                                twoHandlersMessage(handler.program.getFilename(), unit.program.getFilename())));
+                        continue;
+                    }
+                    handler = unit;
+                }
+                long position = family == KTEXT ? text : data;
+                position = (position + section.alignment - 1) & -(long)section.alignment;
+                section.base = position;
+                if (family == KTEXT && position > text) {
+                    int line = section.fragments.isEmpty() ? 1 : section.fragments.get(0).line;
+                    textGaps.add(new Fragment(section, line, (int)(text - position), (int)(position - text), null, null, 0, null, 0));
+                    total += position - text;
+                }
+                long end = position + section.size;
+                require(end <= 0xffffffffL && (section.size == 0 || (family == KTEXT
+                        ? Memory.inKernelTextSegment((int)(end - 1)) : Memory.inKernelDataSegment((int)(end - 1)))),
+                        "Section exceeds mapped memory: ", section.name);
+                if (family == KTEXT) text = end; else data = end;
+                total += section.size;
+            }
+        }
+        return total;
+    }
+
+    /**
      * Static data and the heap after it share the data segment, which ends below the stack and
-     * memory-mapped IO: 4128768 bytes from 0x10010000 to 0x10400000 in MARS's memory layout.
+     * memory-mapped IO: 67043328 bytes from 0x10010000 to 0x14000000, where MARS has 4128768,
+     * to 0x10400000 (asmOS stage 2, decision 7).
      */
     private static void requireStaticDataFits(long end) {
         long limit = Integer.toUnsignedLong(Memory.dataSegmentLimitAddress);
@@ -1115,6 +1401,18 @@ public final class GnuAssembler {
                 require(args.isEmpty(), "Section addresses/subsections are unsupported");
                 switchSection(section(op, null, null, null, null)); return;
             }
+            if (op.equals(".ktext") || op.equals(".kdata")) {
+                // MARS's own dialect takes an address; here the kernel sections have fixed places,
+                // which a program may still name
+                long base = Integer.toUnsignedLong(op.equals(".ktext") ? Memory.exceptionHandlerAddress : Memory.kernelDataBaseAddress);
+                require(args.size() <= 1, "Section addresses/subsections are unsupported");
+                if (args.size() == 1) {
+                    BigInteger address = evaluate(args.get(0), line, current, current.size, true).number;
+                    require(address.longValue() == base && address.bitLength() <= 32, op + " is placed at 0x" + Long.toHexString(base)
+                            + " in the GNU profile: leave out the address, or give that one");
+                }
+                switchSection(section(op, null, null, null, null)); return;
+            }
             if (op.equals(".section") || op.equals(".pushsection")) {
                 Section next = sectionDirective(args);
                 if (op.equals(".pushsection")) sectionStack.push(current);
@@ -1299,16 +1597,17 @@ public final class GnuAssembler {
             int family = matches(TEXT_SECTION, name) ? TEXT : matches(RODATA_SECTION, name) ? RODATA :
                     name.equals(".init_array") || name.startsWith(".init_array.") && matches(PRIORITIZED_ARRAY, name) ? INIT :
                     name.equals(".fini_array") || name.startsWith(".fini_array.") && matches(PRIORITIZED_ARRAY, name) ? FINI :
-                    matches(DATA_SECTION, name) ? DATA : matches(BSS_SECTION, name) ? BSS : name.equals(".common") ? COMMON : -1;
+                    matches(DATA_SECTION, name) ? DATA : matches(BSS_SECTION, name) ? BSS : name.equals(".common") ? COMMON :
+                    matches(KTEXT_SECTION, name) ? KTEXT : matches(KDATA_SECTION, name) ? KDATA : -1;
             boolean debug = matches(DEBUG_SECTION, name);
             require(family >= 0 || debug, "Unsupported section: ", name);
             boolean array = family == INIT || family == FINI;
-            String actualFlags = flags == null ? family == TEXT ? "ax" : family == RODATA ? "a" : family >= INIT ? "aw" : "" : flags;
-            String actualType = type == null ? family >= BSS ? "@nobits" : "@progbits" : type.replace('%', '@');
+            String actualFlags = flags == null ? executableFamily(family) ? "ax" : family == RODATA ? "a" : writableFamily(family) ? "aw" : "" : flags;
+            String actualType = type == null ? zeroedFamily(family) ? "@nobits" : "@progbits" : type.replace('%', '@');
             if (array && actualType.equals(family == INIT ? "@init_array" : "@fini_array")) actualType = "@progbits";
             require(matches(SECTION_FLAGS, actualFlags) && (actualType.equals("@progbits") || actualType.equals("@nobits")), "Unsupported section flags/type: ", name);
-            require(family >= 0 ? actualFlags.contains("a") && actualFlags.contains("x") == (family == TEXT) && actualFlags.contains("w") == (family >= INIT) : !actualFlags.contains("a"), "Conflicting section flags: ", name);
-            require(actualType.equals(family >= BSS ? "@nobits" : "@progbits"), "Conflicting section type: ", name);
+            require(family >= 0 ? actualFlags.contains("a") && actualFlags.contains("x") == executableFamily(family) && actualFlags.contains("w") == writableFamily(family) : !actualFlags.contains("a"), "Conflicting section flags: ", name);
+            require(actualType.equals(zeroedFamily(family) ? "@nobits" : "@progbits"), "Conflicting section type: ", name);
             require(group == null || family >= 0, "Section group on a discarded section: ", name);
             if (actualFlags.contains("M")) require(entrySize != null && matches(ENTRY_SIZE, entrySize) && Integer.parseInt(entrySize) <= 256, "Mergeable section requires a bounded entry size");
             else require(entrySize == null, "Unexpected section entry size");
@@ -1327,7 +1626,8 @@ public final class GnuAssembler {
             return created;
         }
         private void append(int line, int size, String instruction, List<String> expressions, int width, byte[] bytes, int fill) {
-            require(size >= 0 && size <= MAX_BYTES - current.size, "Section exceeds 16 MiB limit");
+            int limit = current.zeroed() ? MAX_RESERVED_BYTES : MAX_BYTES;
+            require(size >= 0 && size <= limit - current.size, current.zeroed() ? "Section exceeds 1 GiB limit" : "Section exceeds 16 MiB limit");
             current.fragments.add(new Fragment(current, line, current.size, size, instruction, expressions, width, bytes, fill));
             current.size += size;
             if (size > 0) current.pendingLabels.clear();
@@ -1358,7 +1658,8 @@ public final class GnuAssembler {
         }
         private int count(String expression, int line) {
             Value value = evaluate(expression, line, current, current.size, true);
-            require(value.number.signum() >= 0 && value.number.compareTo(BigInteger.valueOf(MAX_BYTES)) <= 0, "Layout value is out of range");
+            // as large as a zeroed section's reservation; what is emitted is bounded where it is appended
+            require(value.number.signum() >= 0 && value.number.compareTo(BigInteger.valueOf(MAX_RESERVED_BYTES)) <= 0, "Layout value is out of range");
             return value.number.intValue();
         }
         private void option(String name) {
@@ -1413,6 +1714,12 @@ public final class GnuAssembler {
                 if (code.matches()) args.set(i, code.group(1));
                 else if (args.get(i).equals("$s8")) args.set(i, "$fp");
             }
+            // GNU as and Clang name an FPU control register by its number, $31 for FCSR, where
+            // MARS's own dialect writes $f31.
+            if ((op.equals("cfc1") || op.equals("ctc1")) && args.size() == 2) {
+                Matcher control = NUMBERED_REGISTER.matcher(args.get(1));
+                if (control.matches()) args.set(1, "$f" + control.group(1));
+            }
             String joined = String.join(",", args);
             switch (op) {
                 case "nop": require(args.isEmpty(), "nop takes no operands"); return List.of("nop");
@@ -1444,6 +1751,18 @@ public final class GnuAssembler {
                     if (args.size() == 3) {
                         require(isZeroRegister(args.get(0)), "Unsupported division macro: " + op + " " + joined);
                         return List.of(op + " " + args.get(1) + "," + args.get(2));
+                    }
+                    break;
+                case "mfc0": case "mtc0":
+                    // MIPS32's form names the register's select as well, which Clang always writes
+                    // (mfc0 $2,$9,0). Select 0 is the register MARS's own form names; MARS's
+                    // coprocessor 0 has no other.
+                    if (args.size() == 3) {
+                        BigInteger select = evaluate(args.get(2), line, current, current.size, true).number;
+                        require(select.signum() == 0, op + " " + joined + ": MARS's coprocessor 0 has no select "
+                                + select + " registers, only select 0 of $8 (BadVAddr), $9 (Count), $11 (Compare), "
+                                + "$12 (Status), $13 (Cause) and $14 (EPC)");
+                        return List.of(op + " " + args.get(0) + "," + args.get(1));
                     }
                     break;
                 case "teq": case "tne": case "tge": case "tgeu": case "tlt": case "tltu":
@@ -1565,7 +1884,10 @@ public final class GnuAssembler {
                         store(statement, machine);
                     }
                 }
-            } else for (int i = 0; i < fragment.size; i++) writeByte(fragment.address() + i, fragment.bytes == null ? fragment.fill : fragment.bytes[i] & 255);
+            } else if (fragment.bytes != null || fragment.fill != 0) {
+                for (int i = 0; i < fragment.size; i++) writeByte(fragment.address() + i, fragment.bytes == null ? fragment.fill : fragment.bytes[i] & 255);
+            }
+            // else zeros, which memory already holds: a reservation costs nothing however large
         }
         private void writeByte(long address, int value) {
             // Memory is cleared before every Build, and sections are only ever placed above what
@@ -1615,7 +1937,10 @@ public final class GnuAssembler {
                     // The offset counts words from the delay slot, as MARS and the hardware both do.
                     long delta = destination - (address + 4);
                     require(delta >= -(1L << 17) && delta < (1L << 17), "Branch target is out of range");
-                } else require(((address + 4) & 0xF0000000L) == (destination & 0xF0000000L), "Jump target is outside the 256 MiB region of the jump");
+                } else require(((address + 4) & 0xF0000000L) == (destination & 0xF0000000L),
+                        "Jump target is outside the 256 MiB region of the jump: j and jal keep the top 4 bits of the address,"
+                                + " so they cannot reach between user text and the kernel's .ktext. Load the address into a register"
+                                + " and use jalr (or jr) instead: la $t9, target then jalr $t9");
                 synthetic[0] = "__gnu_branch_" + address;
                 program.getLocalSymbolTable().addSymbol(new Token(TokenTypes.IDENTIFIER, synthetic[0], program, fragment.line, 1), (int)destination, false, errors);
                 args.set(targetIndex, synthetic[0]);

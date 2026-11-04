@@ -48,12 +48,9 @@ public class Simulator extends Observable {
     private SimThread simulatorThread;
     private static Simulator simulator = null; // Singleton object
     public int RUN_SPEED = 1000000; // TODO find correct value
-    // Others can set this true to indicate external interrupt. Initially used
-    // to simulate keyboard and display interrupts. The device is identified
-    // by the address of its MMIO control register. keyboard 0xFFFF0000 and
-    // display 0xFFFF0008. DPS 23 July 2008.
-    public static final int NO_DEVICE = 0;
-    public static volatile int externalInterruptingDevice = NO_DEVICE;
+    // Upstream let other threads set a static externalInterruptingDevice to interrupt the program,
+    // taken whatever Status said and overwritten by a second request. Interrupts are now pending
+    // bits in Cause, gated by Status, see Coprocessor0.
     /**
      * Why a simulation stopped. MARS numbered these 1 to 6, with one reason for both pause and
      * stop; this is RARS's enum, so that both simulators report a stop the same way.
@@ -386,23 +383,26 @@ public class Simulator extends Observable {
                 // under TeaVM, so the block below is no longer synchronized.
                 {
                     try {
-                        if (Simulator.externalInterruptingDevice != NO_DEVICE) {
-                            int deviceInterruptCode = externalInterruptingDevice;
-                            Simulator.externalInterruptingDevice = NO_DEVICE;
-                            throw new ProcessingException(statement, "External Interrupt", deviceInterruptCode);
-                        }
-                        BasicInstruction instruction = (BasicInstruction) statement.getInstruction();
-                        if (instruction == null) {
-                            throw new ProcessingException(statement,
-                                    "undefined instruction (" + Binary.intToHexString(statement.getBinaryStatement()) + ")",
-                                    Exceptions.RESERVED_INSTRUCTION_EXCEPTION);
-                        }
-                        // THIS IS WHERE THE INSTRUCTION EXECUTION IS ACTUALLY SIMULATED!
-                        instruction.getSimulationCode().simulate(statement);
+                        // An interrupt Status lets through is taken before the instruction runs, as
+                        // a step of its own at the interrupted instruction, which it counts as: a
+                        // Step taking one lands on the handler's first instruction, and one Undo
+                        // returns to the instruction it interrupted. Never in a delay slot, whose
+                        // branch EPC could not return to. Status and Cause are looked at only when
+                        // something they depend on has changed (Coprocessor0.interruptCheck).
+                        if (!(Coprocessor0.interruptCheck && !DelayedBranch.isTriggered() && takeInterrupt(pc))) {
+                            BasicInstruction instruction = (BasicInstruction) statement.getInstruction();
+                            if (instruction == null) {
+                                throw new ProcessingException(statement,
+                                        "undefined instruction (" + Binary.intToHexString(statement.getBinaryStatement()) + ")",
+                                        Exceptions.RESERVED_INSTRUCTION_EXCEPTION);
+                            }
+                            // THIS IS WHERE THE INSTRUCTION EXECUTION IS ACTUALLY SIMULATED!
+                            instruction.getSimulationCode().simulate(statement);
 
-                        // IF statement added 7/26/06 (explanation above)
-                        if (backSteppingEnabled) {
-                            backStepper.addDoNothing(pc);
+                            // IF statement added 7/26/06 (explanation above)
+                            if (backSteppingEnabled) {
+                                backStepper.addDoNothing(pc);
+                            }
                         }
                     } catch (ProcessingException pe) {
                         if (pe.errors() == null) {
@@ -446,7 +446,10 @@ public class Simulator extends Observable {
                         return fail(ProcessingException.duringExecution(statement, pc,
                                 ProcessingException.Kind.INTERNAL, internalFailure), maxSteps, pc);
                     } finally {
-                        app.specy.mars.assembler.MemoryLayoutFacts.refreshStack(RegisterFile.getValue(29));
+                        app.specy.mars.assembler.MemoryLayoutFacts.refreshStack(RegisterFile.getStackPointerRegister().getValueNoNotify());
+                        // Count moves with every instruction, an interrupt's entry included, so
+                        // the timer's match joins the instruction that reached it.
+                        if (Coprocessor0.timerArmed) Coprocessor0.timerTick();
                         backStepper.endInstruction();
                         instructionsRun++;
                     }
@@ -530,6 +533,43 @@ public class Simulator extends Observable {
             // counter "fell off the end" of the program. NOTE: Assumes the
             // "while" loop contains no "break;" statements.
             return dropOffBottom(maxSteps, pc);
+        }
+
+        /**
+         * Takes the interrupt Status lets through now, if there is one, before the instruction at
+         * {@code pc}, in the step the loop has just opened for that instruction: the program
+         * counter goes to the exception handler at 0x80000180. With no handler there the program
+         * stops, as MARS stops at an exception it has no handler for.
+         *
+         * @return whether one was taken, the step then being the entry's
+         * @throws ProcessingException when an interrupt has no handler to go to
+         */
+        private boolean takeInterrupt(int pc) throws ProcessingException {
+            int pending = Coprocessor0.deliverable();
+            if (pending == 0) return false;
+            ProgramStatement handler = null;
+            try {
+                handler = Globals.memory.getStatement(Memory.exceptionHandlerAddress);
+            } catch (AddressErrorException unmapped) {
+                // reported below
+            }
+            if (handler == null) {
+                ErrorList errors = new ErrorList();
+                errors.add(new ErrorMessage((MIPSprogram) null, 0, 0, "Runtime exception at "
+                        + Binary.intToHexString(pc) + ": interrupt (Cause bits "
+                        + Binary.intToHexString(pending) + ") with no handler at "
+                        + Binary.intToHexString(Memory.exceptionHandlerAddress)
+                        + ": write one in .ktext, or leave this interrupt disabled"));
+                ProcessingException failure = new ProcessingException(errors);
+                failure.setAddress(pc);
+                RegisterFile.setProgramCounter(pc);
+                throw failure;
+            }
+            Coprocessor0.enterInterrupt(pc, pending, Memory.exceptionHandlerAddress);
+            // the rest of the pass is an instruction's: a breakpoint on the handler's first
+            // instruction stops the run there, and a Step ends on it
+            RegisterFile.setProgramCounter(Memory.exceptionHandlerAddress);
+            return true;
         }
 
         /** The program counter "fell off the end" of the program: there is no statement to run. */

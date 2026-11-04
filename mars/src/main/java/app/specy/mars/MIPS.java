@@ -62,8 +62,8 @@ public class MIPS {
     }
 
     /**
-     * Every File the last assembly read for the program's own units, linked or not: the entry's
-     * File and what it includes, then each other unit's.
+     * Every File the last assembly read for the program's own units: the entry's File and what it
+     * includes, then those of each other unit the link took. A unit it did not take is never read.
      */
     public List<String> getUnitFiles() {
         requireTokenized();
@@ -142,7 +142,9 @@ public class MIPS {
      * The program's other units: Files of the source set, GNU compiler assembly like the entry, that
      * the link takes as an archive's members, each only when it defines a global the program still
      * needs, searched before the library. A unit it takes is the program's own code, with its own
-     * local labels. Every one is parsed and checked, taken or not. Only for the gnu-compiler-v1
+     * local labels. Which globals a unit defines is read from its declarations first, and only a
+     * unit the link takes is parsed, so one it leaves out is never checked: it can be in another
+     * dialect, or have mistakes, without failing the assembly. Only for the gnu-compiler-v1
      * profile.
      */
     public void setUnits(String[] paths) {
@@ -224,6 +226,9 @@ public class MIPS {
         main.getBackStepper().clearHistory();
         RegisterFile.resetRegisters();
         Coprocessor0.resetRegisters();
+        // nothing pending from the last run: no device line raised and the timer off until Compare
+        // is written, the instruction count starting over with it
+        Coprocessor0.resetInterrupts();
         Coprocessor1.resetRegisters();
         if (entrySymbol != null) RegisterFile.initializeProgramCounter(entrySymbol);
         else RegisterFile.initializeProgramCounter(startAtMain);
@@ -240,11 +245,7 @@ public class MIPS {
 
     public StackFrame[] getCallStack(){
         requireAssembled();
-        StackFrame[] stack = new StackFrame[Stack.getCallStack().size()];
-        for(int i = 0; i < stack.length; i++) {
-            stack[i] = Stack.getCallStack().get(i);
-        }
-        return stack;
+        return Stack.getCallStack().toArray(new StackFrame[0]);
     }
 
     /**
@@ -294,6 +295,8 @@ public class MIPS {
             return stopReason;
         }
         double before = Simulator.getInstance().getInstructionsRun();
+        // whatever the host changed since the last call, a line or a register, is looked at first
+        Coprocessor0.beginRun();
         try {
             stopReason = body.run();
         } catch (ProcessingException failure) {

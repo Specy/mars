@@ -39,6 +39,9 @@ public final class MemoryLayoutFacts {
     public static int[] symbols() { return flatten(symbols, 4); }
     public static void resetStack(int sp) { stackTop = previousSp = sp; }
     public static void refreshStack(int sp) {
+        // Called after every instruction, and nearly every one leaves the stack pointer where the
+        // last one did, at or below the top recorded so far, which changes nothing: two comparisons.
+        if (sp == previousSp && Integer.compareUnsigned(sp, stackTop) <= 0) return;
         double current = sp < 0 ? sp + 4294967296.0 : sp;
         double previous = previousSp < 0 ? previousSp + 4294967296.0 : previousSp;
         int top = Math.abs(current - previous) > 4096 || Integer.compareUnsigned(sp, stackTop) > 0 ? sp : stackTop;

@@ -127,6 +127,13 @@ public class Memory extends Observable {
    // the simulator's throughput as soon as a single observer was registered.
    private MemoryObservable[] observablesSnapshot = new MemoryObservable[0];
 
+   // The lowest and the highest address any observer watches, signed as MemoryObservable.match
+   // compares them. Observers are memory-mapped devices in practice, so almost every access - every
+   // instruction fetch among them - falls outside both and is turned away with two comparisons,
+   // where it walked every observer before. With no observer, low is above high and nothing passes.
+   private int observedLow = Integer.MAX_VALUE;
+   private int observedHigh = Integer.MIN_VALUE;
+
    // The data segment is allocated in blocks of 1024 ints (4096 bytes). Each block
    // is
    // referenced by a "block table" entry, and the table has 1024 entries. The
@@ -169,6 +176,11 @@ public class Memory extends Observable {
 
    private static final int BLOCK_LENGTH_WORDS = 1024; // allocated blocksize 1024 ints == 4K bytes
    private static final int BLOCK_TABLE_LENGTH = 1024; // Each entry of table points to a block.
+   // The data segment's table is sixteen times as long: 64 MB for static data and the heap, where
+   // MARS has 4 MB, as a documented superset, so that a program that needs more keeps going rather
+   // than running out (asmOS stage 2, decision 7). Addresses do not move, and only the table grows:
+   // blocks are still allocated when first written. The stack and the kernel data keep 4 MB.
+   private static final int DATA_BLOCK_TABLE_LENGTH = 16384;
    private int[][] dataBlockTable;
    private int[][] kernelDataBlockTable;
 
@@ -230,13 +242,12 @@ public class Memory extends Observable {
 
    // Set "top" address boundary to go with each "base" address. This determines
    // permissable
-   // address range for user program. Currently limit is 4MB, or 1024 * 1024 * 4
-   // bytes based
-   // on the table structures described above (except memory mapped IO, limited to
-   // 64KB by range).
+   // address range for user program. The limit is 4MB, or 1024 * 1024 * 4 bytes, based
+   // on the table structures described above, except for the data segment's 64MB
+   // (DATA_BLOCK_TABLE_LENGTH) and memory mapped IO, limited to 64KB by range.
 
    public static int dataSegmentLimitAddress = dataSegmentBaseAddress +
-         BLOCK_LENGTH_WORDS * BLOCK_TABLE_LENGTH * WORD_LENGTH_BYTES;
+         BLOCK_LENGTH_WORDS * DATA_BLOCK_TABLE_LENGTH * WORD_LENGTH_BYTES;
    public static int textLimitAddress = textBaseAddress +
          TEXT_BLOCK_LENGTH_WORDS * TEXT_BLOCK_TABLE_LENGTH * WORD_LENGTH_BYTES;
    public static int kernelDataSegmentLimitAddress = kernelDataBaseAddress +
@@ -280,6 +291,8 @@ public class Memory extends Observable {
    public void clear() {
       setConfiguration();
       initialize();
+      // a program being loaded: what was written before it is not news to the host
+      clearWrittenBlocks();
    }
 
    /**
@@ -308,7 +321,7 @@ public class Memory extends Observable {
       kernelHighAddress = MemoryConfigurations.getCurrentConfiguration().getKernelHighAddress(); // 0xffffffff;
       dataSegmentLimitAddress = Math.min(MemoryConfigurations.getCurrentConfiguration().getDataSegmentLimitAddress(),
             dataSegmentBaseAddress +
-                  BLOCK_LENGTH_WORDS * BLOCK_TABLE_LENGTH * WORD_LENGTH_BYTES);
+                  BLOCK_LENGTH_WORDS * DATA_BLOCK_TABLE_LENGTH * WORD_LENGTH_BYTES);
       textLimitAddress = Math.min(MemoryConfigurations.getCurrentConfiguration().getTextLimitAddress(),
             textBaseAddress +
                   TEXT_BLOCK_LENGTH_WORDS * TEXT_BLOCK_TABLE_LENGTH * WORD_LENGTH_BYTES);
@@ -356,7 +369,7 @@ public class Memory extends Observable {
    private void initialize() {
       heapAddress = heapBaseAddress;
       textBlockTable = new ProgramStatement[TEXT_BLOCK_TABLE_LENGTH][];
-      dataBlockTable = new int[BLOCK_TABLE_LENGTH][]; // array of null int[] references
+      dataBlockTable = new int[DATA_BLOCK_TABLE_LENGTH][]; // array of null int[] references
       kernelTextBlockTable = new ProgramStatement[TEXT_BLOCK_TABLE_LENGTH][];
       kernelDataBlockTable = new int[BLOCK_TABLE_LENGTH][];
       stackBlockTable = new int[BLOCK_TABLE_LENGTH][];
@@ -377,8 +390,8 @@ public class Memory extends Observable {
    /**
     * Returns the next available word-aligned heap address. There is no recycling
     * and
-    * no heap management! There is however nearly 4MB of heap space available in
-    * Mars.
+    * no heap management! The heap and static data share the data segment's 64MB, where
+    * MARS has 4MB.
     *
     * @param numBytes Number of bytes requested. Should be multiple of 4, otherwise
     *                 next higher multiple of 4 allocated.
@@ -487,6 +500,7 @@ public class Memory extends Observable {
          throw outOfRange("address out of range ",
                Exceptions.ADDRESS_EXCEPTION_STORE, address);
       }
+      markWritten(address, length);
       notifyAnyObservers(AccessNotice.WRITE, address, length, value);
       return oldValue;
    }
@@ -577,6 +591,7 @@ public class Memory extends Observable {
          throw outOfRange("store address out of range ",
                Exceptions.ADDRESS_EXCEPTION_STORE, address);
       }
+      markWritten(address, WORD_LENGTH_BYTES);
       return oldValue;
    }
 
@@ -1046,7 +1061,7 @@ public class Memory extends Observable {
          if (block != null) {
             ProgramStatement statement = block[relative % TEXT_BLOCK_LENGTH_WORDS];
             if (statement != null) {
-               if (observablesSnapshot.length > 0) {
+               if (address >= observedLow && address <= observedHigh) {
                   notifyAnyObservers(AccessNotice.READ, address, Instruction.INSTRUCTION_LENGTH,
                         statement.getBinaryStatement());
                }
@@ -1220,7 +1235,7 @@ public class Memory extends Observable {
     * Handy little utility to find out if given address is in MARS data
     * segment (starts at Memory.dataSegmentBaseAddress).
     * Note that MARS does not implement the entire MIPS data segment space,
-    * but it does support at least 4MB.
+    * but it does support 64MB of it.
     * 
     * @param address integer memory address
     * @return true if that address is within MARS-defined data segment,
@@ -1387,6 +1402,14 @@ public class Memory extends Observable {
 
    private void refreshObservablesSnapshot() {
       observablesSnapshot = (MemoryObservable[]) observables.toArray(new MemoryObservable[0]);
+      int low = Integer.MAX_VALUE, high = Integer.MIN_VALUE;
+      for (MemoryObservable observable : observablesSnapshot) {
+         low = Math.min(low, observable.lowAddress);
+         // the last byte of the range's last word, as match() reads it
+         high = Math.max(high, observable.highAddress - 1 + WORD_LENGTH_BYTES);
+      }
+      observedLow = low;
+      observedHigh = high;
    }
 
    /////////////////////////////////////////////////////////////////////////
@@ -1429,6 +1452,166 @@ public class Memory extends Observable {
    }
 
    /*********************************
+    * WRITTEN BLOCKS
+    *************************************/
+
+   // A host that mirrors one range of memory, the editor's bitmap display, has Memory note which
+   // 1 KB blocks of that range stores have written, and reads the map once per update, fetching only
+   // those blocks with getWordsForHost. That replaces an observer called on every store, which is a
+   // call out of the simulator for each one. Every store reaches set() or storeRawWord(), which mark
+   // the map: store instructions of every width, syscalls that write memory, Pokes and host writes,
+   // the assembler's data, and Undo's restores. One range only: a second trackWrites replaces it.
+
+   /** The size of one block of the written-blocks map, in bytes. */
+   public static final int WRITTEN_BLOCK_BYTES = 1024;
+   private static final int WRITTEN_BLOCK_SHIFT = 10;
+   private static final int[] NO_BLOCKS = new int[0];
+
+   /** The first address of the tracked range. */
+   private int trackedStart;
+   /** The tracked range's length in bytes, 0 when nothing is tracked. */
+   private int trackedLength;
+   /** One bit per block of the tracked range, set once a store has written into the block. */
+   private int[] writtenBits = new int[0]; // not NO_BLOCKS: the singleton is made before it is set
+   /** How many bits of writtenBits are set, so that taking an empty map costs nothing. */
+   private int writtenCount;
+
+   /**
+    * Starts noting the 1 KB blocks stores write in [start, end), forgetting any range tracked
+    * before and what was written in it; start == end stops. Blocks are counted from start, so
+    * block n holds the bytes from start + n * 1024. The range survives assembling and
+    * initializing, as observers do; assembling forgets what was written.
+    *
+    * @param start the first address tracked
+    * @param end   the address after the last one tracked; it may be 0 for a range that ends at the
+    *              top of the address space
+    * @throws IllegalArgumentException if the range is longer than 2 GB, or ends before it starts
+    */
+   public void trackWrites(int start, int end) {
+      int length = end - start;
+      if (length < 0) {
+         throw new IllegalArgumentException("A tracked range must end after it starts and span less than 2 GB");
+      }
+      trackedStart = start;
+      trackedLength = length;
+      int blocks = (length >>> WRITTEN_BLOCK_SHIFT) + ((length & (WRITTEN_BLOCK_BYTES - 1)) != 0 ? 1 : 0);
+      writtenBits = blocks == 0 ? NO_BLOCKS : new int[(blocks + 31) >> 5];
+      writtenCount = 0;
+   }
+
+   /**
+    * The blocks written since the last call, in ascending order, and forgets them.
+    *
+    * @return the indices of the written blocks of the tracked range, counted from its start
+    */
+   public int[] takeWrittenBlocks() {
+      if (writtenCount == 0) {
+         return NO_BLOCKS;
+      }
+      int[] blocks = new int[writtenCount];
+      int taken = 0;
+      for (int word = 0; word < writtenBits.length; word++) {
+         int bits = writtenBits[word];
+         if (bits == 0) {
+            continue;
+         }
+         writtenBits[word] = 0;
+         while (bits != 0) {
+            blocks[taken++] = (word << 5) + Integer.numberOfTrailingZeros(bits);
+            bits &= bits - 1;
+         }
+      }
+      writtenCount = 0;
+      return blocks;
+   }
+
+   /** Forgets what was written, keeping the range. */
+   private void clearWrittenBlocks() {
+      if (writtenCount != 0) {
+         Arrays.fill(writtenBits, 0);
+         writtenCount = 0;
+      }
+   }
+
+   // Marks the blocks of the tracked range that a store of length bytes from address wrote: one,
+   // or two when the store straddles a boundary. A store outside the range costs a subtraction and
+   // one or two comparisons, since it runs on every store the program makes.
+   private void markWritten(int address, int length) {
+      int first = address - trackedStart;
+      if (first >= trackedLength || first + length <= 0) {
+         return;
+      }
+      int last = first + length - 1;
+      if (first < 0) {
+         first = 0;
+      }
+      if (last >= trackedLength) {
+         last = trackedLength - 1;
+      }
+      for (int block = first >> WRITTEN_BLOCK_SHIFT; block <= last >> WRITTEN_BLOCK_SHIFT; block++) {
+         int bit = 1 << (block & 31);
+         if ((writtenBits[block >> 5] & bit) == 0) {
+            writtenBits[block >> 5] |= bit;
+            writtenCount++;
+         }
+      }
+   }
+
+   /**
+    * Reads count words from a word-aligned address the way a host inspecting memory sees them:
+    * no observer is notified, and the text segments read as the encodings of the statements they
+    * hold, 0 where there is none. Each word is what a load of it reads.
+    *
+    * @param address the first word's address, on a word boundary
+    * @param count   how many words to read
+    * @return the words
+    * @throws AddressErrorException if the address is not on a word boundary, or a word is outside
+    *                               the memory the simulator has
+    */
+   public int[] getWordsForHost(int address, int count) throws AddressErrorException {
+      if (address % WORD_LENGTH_BYTES != 0) {
+         throw new AddressErrorException("address for fetch not aligned on word boundary",
+               Exceptions.ADDRESS_EXCEPTION_LOAD, address);
+      }
+      if (count < 0) {
+         throw new IllegalArgumentException("A negative number of words: " + count);
+      }
+      int[] words = new int[count];
+      if (count > 0 && byteOrder == LITTLE_ENDIAN && inDataSegment(address)
+            && count <= (dataSegmentLimitAddress - address) / WORD_LENGTH_BYTES) {
+         // the data segment's table holds each word as a load reads it, a block at a time
+         int relative = (address - dataSegmentBaseAddress) >> 2;
+         for (int done = 0; done < count;) {
+            int offset = relative % BLOCK_LENGTH_WORDS;
+            int run = Math.min(BLOCK_LENGTH_WORDS - offset, count - done);
+            int[] block = dataBlockTable[relative / BLOCK_LENGTH_WORDS];
+            if (block != null) {
+               System.arraycopy(block, offset, words, done, run);
+            }
+            done += run;
+            relative += run;
+         }
+         return words;
+      }
+      for (int i = 0; i < count; i++) {
+         words[i] = getWordForHost(address + i * WORD_LENGTH_BYTES);
+      }
+      return words;
+   }
+
+   private int getWordForHost(int address) throws AddressErrorException {
+      ProgramStatement statement;
+      if (inTextSegment(address)) {
+         statement = readProgramStatement(address, textBaseAddress, textBlockTable, false);
+      } else if (inKernelTextSegment(address)) {
+         statement = readProgramStatement(address, kernelTextBaseAddress, kernelTextBlockTable, false);
+      } else {
+         return get(address, WORD_LENGTH_BYTES, false);
+      }
+      return statement == null ? 0 : statement.getBinaryStatement();
+   }
+
+   /*********************************
     * THE HELPERS
     *************************************/
 
@@ -1439,8 +1622,11 @@ public class Memory extends Observable {
    // is from command mode, Globals.program is null but still want ability to
    //////////////////////////////////////////////////////////////////////////////// observe.
    private void notifyAnyObservers(int type, int address, int length, int value) {
+      if (address < observedLow || address > observedHigh) {
+         return;
+      }
       MemoryObservable[] snapshot = this.observablesSnapshot;
-      if (snapshot.length == 0 || Globals.program == null) {
+      if (Globals.program == null) {
          return;
       }
       // The notice is immutable, so overlapping observers share one rather than one each.

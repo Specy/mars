@@ -323,8 +323,9 @@ public class MIPSprogram {
    }
 
    /**
-    * The programs of the units the last GNU assembly read: this one, then the archive's, linked or
-    * not, for their lines and tokens. Only this one before an assembly, or for the MARS dialect.
+    * The programs of the units the last GNU assembly read: this one, then those of the archive's
+    * units the link took, for their lines and tokens. Only this one before an assembly, or for the
+    * MARS dialect.
     **/
 
    public List<MIPSprogram> getUnitPrograms() {

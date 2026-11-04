@@ -131,6 +131,31 @@ for (const value of [0x7fff, 0x8000, 0xffff, 0x12345678, 0x1234ffff, -32768, -32
     assert.deepEqual(words(assemble('.text\nsll $9,$9,$2\nsrl $8,$8,$3\nsra $2,$4,$7\nsll $2,$4,3\n'), TEXT, 4), [0x00494804, 0x00684006, 0x00e41007, 0x000410c0])
 }
 
+// Coprocessor 0 moves with MIPS32's select, which Clang always writes (mfc0 $2,$9,0), and the
+// FPU's control registers by GNU's number, $31 for FCSR, as Clang and GNU as write them: both
+// assemble to GNU as's encodings (clang 21.1.0's integrated assembler) and run as MARS's own forms.
+// MARS's coprocessor 0 has only select 0, so another select is an error naming it.
+{
+    const core = assemble(['.text', '.globl main', 'main:',
+        'li $9,1234', 'mtc0 $0,$9,0', 'mfc0 $8,$9,0', 'mtc0 $9,$11,0', 'mfc0 $10,$11', 'mfc0 $11,$12,0', 'ctc1 $12,$31', 'cfc1 $13,$31',
+        'li $12,0x2800000', 'ctc1 $12,$31', 'cfc1 $14,$31', 'cfc1 $15,$f31', 'ctc1 $0,$31', 'cfc1 $16,$31', 'mfc0 $2,$11,0', exit,
+    ].join('\n'))
+    assert.deepEqual(words(core, TEXT + 4, 7), [0x40804800, 0x40084800, 0x40895800, 0x400a5800, 0x400b6000, 0x44ccf800, 0x444df800])
+    const registers = await run(core)
+    assert.ok(registers[8] >>> 0 <= 1, 'mtc0 $0,$9,0 set Count, which mfc0 $8,$9,0 read the instruction after')
+    assert.equal(registers[10], 1234, 'mtc0 $9,$11,0 wrote Compare, which mfc0 $10,$11 read back')
+    assert.equal(registers[4], 1234, 'and mfc0 $2,$11,0 too')
+    assert.equal(registers[11], 0xff11, 'mfc0 $11,$12,0 read Status')
+    assert.equal(registers[14], 0x2800000, 'ctc1 $12,$31 set FCSR\'s condition codes 0 and 1, which cfc1 read back')
+    assert.equal(registers[15], 0x2800000, 'MARS\'s $f31 still names FCSR')
+    assert.equal(registers[16], 0, 'ctc1 $0,$31 cleared them')
+    reject('.text\nmain: mfc0 $2,$16,1\n', /mfc0 \$2,\$16,1: MARS's coprocessor 0 has no select 1 registers/)
+    reject('.text\nmain: mtc0 $2,$12,2\n', /no select 2 registers/)
+    // MARS's own dialect is unchanged: it writes FCSR $f31, and mfc0 takes no select
+    assert.deepEqual(words(assemble('.text\nmain: cfc1 $13,$f31\nmfc0 $8,$9\n', {}, {}), TEXT, 2), [0x444df800, 0x40084800])
+    assert.equal(coreFor('.text\nmain: mfc0 $8,$9,0\n', {}, {}).assemble().hasErrors, true)
+}
+
 // Delay slots: MARS runs without delayed branching, so in noreorder code each slot must hold a
 // nop, and a call returns to it; in reorder code the instruction after a branch is no slot at all.
 {
@@ -368,11 +393,11 @@ for (const [value, count] of [['-2147483648', 1], ['2147483647', 2], ['0xfffffff
         assert.equal(registers[17], 0x10092010, 'and the next block after it')
         assert.equal(core.exitCode, 27, 'the array, the common block and the heap hold their own values')
     }
-    // The largest static data the data segment holds, which leaves the heap empty.
-    assert.equal(assemble('.bss\nbig: .zero 4128768\n').getHeapStart(), 0x10400000)
-    reject('.bss\nbig: .zero 4128769\n',
-        /^Static data ends at 0x10400001, past the end of the data segment at 0x10400000: \.data, \.rodata, \.bss and common symbols together fit in 4128768 bytes from 0x10010000$/m)
-    reject('.data\n.word 1\n.bss\n.comm huge,4194304,4\n', /Static data ends at 0x10410004, past the end of the data segment/)
+    // The largest static data the data segment's 64 MB hold, which leaves the heap empty.
+    assert.equal(assemble('.bss\nbig: .zero 67043328\n').getHeapStart(), 0x14000000)
+    reject('.bss\nbig: .zero 67043329\n',
+        /^Static data ends at 0x14000001, past the end of the data segment at 0x14000000: \.data, \.rodata, \.bss and common symbols together fit in 67043328 bytes from 0x10010000$/m)
+    reject('.data\n.word 1\n.bss\n.comm huge,67108864,4\n', /Static data ends at 0x14010004, past the end of the data segment/)
     // Static data below the heap base leaves the heap where MARS has it.
     assert.equal(assemble('.bss\nbig: .zero 196608\n').getHeapStart(), HEAP_BASE)
     assert.equal(assemble('.bss\nbig: .zero 196609\n').getHeapStart(), 0x10041000)

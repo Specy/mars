@@ -213,7 +213,7 @@ main:   la   $a0, ask
 
 // Print string prints up to the NUL byte whatever the length, as MARS 4.5 does. A string that runs
 // into memory it cannot read stops the program with the address error, after printing what it read:
-// this one fills the last 16 bytes of the data segment, which ends at 0x10400000.
+// this one fills the last 16 bytes of the data segment, which ends at 0x14000000.
 {
     const long = 'é'.repeat(35000)
     const printed = []
@@ -221,9 +221,9 @@ main:   la   $a0, ask
         { printString: text => printed.push(text) })
     assert.deepEqual(printed, [long], '70,000 bytes print whole')
     printed.length = 0
-    await assert.rejects(() => run(`.data 0x103ffff0\nend: .ascii "0123456789abcdé"\n.text\nmain: la $a0, end\nli $v0, 4\nsyscall\n`,
+    await assert.rejects(() => run(`.data 0x13fffff0\nend: .ascii "0123456789abcdé"\n.text\nmain: la $a0, end\nli $v0, 4\nsyscall\n`,
         { printString: text => printed.push(text) }),
-        /Runtime exception at 0x0040000c: address out of range 0x10400000/)
+        /Runtime exception at 0x0040000c: address out of range 0x14000000/)
     assert.deepEqual(printed, ['0123456789abcdé'], 'the text read before the address error prints')
 }
 

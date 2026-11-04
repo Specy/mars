@@ -826,7 +826,7 @@ public class InstructionSet {
                                 int[] operands = statement.getOperands();
                                 if (RegisterFile.getValue(operands[0]) >= 0) { // the "and link" part
                                     processReturnAddress(31);// RegisterFile.updateRegister("$ra",RegisterFile.getProgramCounter());
-                                    Stack.pushCallStack(StackFrame.fromGlobalState(processBranch(operands[1])));
+                                    Stack.pushCallStack(processBranch(operands[1]));
                                 }
                             }
                         }));
@@ -879,7 +879,7 @@ public class InstructionSet {
                                 int[] operands = statement.getOperands();
                                 if (RegisterFile.getValue(operands[0]) < 0) { // the "and link" part
                                     processReturnAddress(31);// RegisterFile.updateRegister("$ra",RegisterFile.getProgramCounter());
-                                    Stack.pushCallStack(StackFrame.fromGlobalState(processBranch(operands[1])));
+                                    Stack.pushCallStack(processBranch(operands[1]));
                                 }
                             }
                         }));
@@ -1102,7 +1102,7 @@ public class InstructionSet {
                         }));
         instructionList.add(
                 new BasicInstruction("wait",
-                        "Wait for interrupt : Halts the processor until an interrupt arrives. This simulator delivers no interrupts, so there would be nothing to wake it; rather than hang, 'wait' does nothing and execution continues. It is accepted so that kernel-style code assembles unchanged.",
+                        "Wait for interrupt : On a real processor, stops until an interrupt arrives. In this simulator 'wait' does nothing and execution continues at once: Count counts instructions, so a loop around 'wait' is how a program idles until the timer or a device interrupts it.",
                         BasicInstructionFormat.R_FORMAT,
                         "010000 1 0000000000000000000 100000",
                         new SimulationCode() {
@@ -1149,7 +1149,7 @@ public class InstructionSet {
                                 processReturnAddress(31);// RegisterFile.updateRegister(31, RegisterFile.getProgramCounter());
                                 int address = ((RegisterFile.getProgramCounter() & 0xF0000000)
                                         | (operands[0] << 2));
-                                Stack.pushCallStack(StackFrame.fromGlobalState(address));
+                                Stack.pushCallStack(address);
                                 processJump(address);
                             }
                         }));
@@ -1163,7 +1163,7 @@ public class InstructionSet {
                                 int[] operands = statement.getOperands();
                                 processReturnAddress(operands[0]);// RegisterFile.updateRegister(operands[0],
                                 // RegisterFile.getProgramCounter());
-                                Stack.pushCallStack(StackFrame.fromGlobalState(RegisterFile.getValue(operands[1])));
+                                Stack.pushCallStack(RegisterFile.getValue(operands[1]));
                                 processJump(RegisterFile.getValue(operands[1]));
                             }
                         }));
@@ -1176,7 +1176,7 @@ public class InstructionSet {
                             public void simulate(ProgramStatement statement) throws ProcessingException {
                                 int[] operands = statement.getOperands();
                                 processReturnAddress(31);// RegisterFile.updateRegister(31, RegisterFile.getProgramCounter());
-                                Stack.pushCallStack(StackFrame.fromGlobalState(RegisterFile.getValue(operands[0])));
+                                Stack.pushCallStack(RegisterFile.getValue(operands[0]));
                                 processJump(RegisterFile.getValue(operands[0]));
                             }
                         }));
@@ -1381,7 +1381,7 @@ public class InstructionSet {
                         }));
         instructionList.add(
                 new BasicInstruction("mfc0 $t1,$8",
-                        "Move from Coprocessor 0 : Reads a Coprocessor 0 (CP0) control register and places its value in general-purpose register $t1. CP0 registers hold exception/interrupt state: register 8 (BadVAddr), 12 (Status), 13 (Cause), 14 (EPC), etc.",
+                        "Move from Coprocessor 0 : Reads a Coprocessor 0 (CP0) control register and places its value in general-purpose register $t1. CP0 registers hold exception, interrupt and timer state: register 8 (BadVAddr), 9 (Count), 11 (Compare), 12 (Status), 13 (Cause) and 14 (EPC).",
                         BasicInstructionFormat.R_FORMAT,
                         "010000 00000 fffff sssss 00000 000000",
                         new SimulationCode() {
@@ -1393,14 +1393,13 @@ public class InstructionSet {
                         }));
         instructionList.add(
                 new BasicInstruction("mtc0 $t1,$8",
-                        "Move to Coprocessor 0 : Writes the value of general-purpose register $t1 into a Coprocessor 0 (CP0) control register. Used by exception handlers to modify the Status and Cause registers or to clear the EPC.",
+                        "Move to Coprocessor 0 : Writes the value of general-purpose register $t1 into a Coprocessor 0 (CP0) control register. Used by exception handlers to modify the Status register or the EPC, and to set the timer: writing Compare (11) turns the timer on and clears its pending interrupt, and writing Count (9) sets the count. Cause's interrupt-pending bits belong to the interrupt sources and keep their value.",
                         BasicInstructionFormat.R_FORMAT,
                         "010000 00100 fffff sssss 00000 000000",
                         new SimulationCode() {
                             public void simulate(ProgramStatement statement) throws ProcessingException {
                                 int[] operands = statement.getOperands();
-                                Coprocessor0.updateRegister(operands[1],
-                                        RegisterFile.getValue(operands[0]));
+                                Coprocessor0.moveTo(operands[1], RegisterFile.getValue(operands[0]), true);
                             }
                         }));
 
