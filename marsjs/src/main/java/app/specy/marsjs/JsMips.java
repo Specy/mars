@@ -445,11 +445,27 @@ public class JsMips {
 
     @JSExport
     public JsStackFrame[] getCallStack(){
+        return getCallStackUpTo(-1);
+    }
+
+    /**
+     * The newest {@code max} frames of the call stack, oldest first, or every frame it holds when
+     * {@code max} is negative: the TypeScript {@code getCallStack(max?)}, which passes -1 for a
+     * missing {@code max}.
+     */
+    @JSExport
+    public JsStackFrame[] getCallStackUpTo(int max){
         // each read copies every frame, so the stack is read once
-        StackFrame[] frames = this.main.getCallStack();
+        StackFrame[] frames = this.main.getCallStack(max);
         JsStackFrame[] stack = new JsStackFrame[frames.length];
         for (int i = 0; i < frames.length; i++) stack[i] = new JsStackFrame(frames[i]);
         return stack;
+    }
+
+    /** How many frames deep the call stack is, those past its limit included; in constant time. */
+    @JSExport
+    public int getCallDepth() {
+        return this.main.getCallDepth();
     }
 
     @JSExport
@@ -624,6 +640,15 @@ public class JsMips {
     @JSExport
     public int[] getInterruptTaken() {
         return Coprocessor0.lastTaken();
+    }
+
+    /**
+     * The run call behind the TypeScript {@code run(options)}, which checks the options and fills in
+     * their defaults: see {@link MIPS#run(int[], int, int, boolean)}.
+     */
+    @JSExport
+    public JSPromise<JSNumber> runWith(int[] breakpoints, int limit, int untilCallDepth, boolean skipBreakpointAtPc) {
+        return run(() -> this.main.run(breakpoints, limit, untilCallDepth, skipBreakpointAtPc));
     }
 
     @JSExport

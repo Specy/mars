@@ -337,6 +337,9 @@ mipsSimulator.pulseExternalInterrupt(0x80) // one request: taken once, then spen
 *   **The entry is a step of its own**, at the interrupted instruction, which has not run: it counts
     as an instruction, a breakpoint on the handler's first instruction stops a run there, and one
     `undo()` returns to the interrupted instruction with EPC, Cause and Status put back.
+*   **The handler is a call stack frame** of kind `interrupt`, returning to the interrupted
+    instruction, until its `eret`; an exception's handler is one of kind `exception`. See
+    [The call stack](#the-call-stack).
 *   **Lines are level-triggered**: a raised line stays pending, and is taken again after every
     `eret`, until it is cleared. `undo()` leaves the lines alone, since they are the host's: state
     them again after one. `initialize()` clears them.
@@ -389,9 +392,9 @@ puts a generator back as it was before the service ran, so Undo then Step draws 
 
 ## Running and stopping
 
-Every run call (`step`, `simulate`, `simulateWithLimit`, `simulateWithBreakpoints`,
-`simulateWithBreakpointsAndLimit`) resolves to a `StopReason`, the same enum `@specy/risc-v`
-exports:
+Every run call (`step`, `run`, `simulate`, `simulateWithLimit`, `simulateWithBreakpoints`,
+`simulateWithBreakpointsAndLimit`) resolves to a `StopReason`, the same enum, with the same
+numbers, as `@specy/risc-v` exports:
 
 | `StopReason` | When |
 | --- | --- |
@@ -399,6 +402,65 @@ exports:
 | `BREAKPOINT` | the program counter reached a breakpoint address, whose instruction has not run |
 | `NORMAL_TERMINATION` | exit (10) or exit2 (17) ran |
 | `CLIFF_TERMINATION` | the program ran off the end of its code; the call that runs the last instruction says so |
+| `PAUSE` | an IO handler called `pause()` |
+| `CALL_DEPTH` | a `run` with `untilCallDepth: n` found the call stack `n` frames deep or less, before the instruction at the program counter ran |
+
+`run(options)` takes every way to stop as an option, and is what a debugger's Step over and Step
+out use:
+
+```typescript
+await mipsSimulator.run({
+    breakpoints: [0x00400020],  // none by default
+    limit: 100_000,             // none when left out, 0 or less
+    untilCallDepth: 2,          // none when left out
+    skipBreakpointAtPc: false,  // true by default
+});
+```
+
+*   **`untilCallDepth: n`** stops the call whenever `getCallDepth()` is `n` or less: when the call
+    begins, so nothing runs if it already is, and after every instruction. It is tested before the
+    breakpoints, `pause()` and the limit, so a run whose last instruction returned from the routine
+    resolves to `CALL_DEPTH`, whichever of those that instruction also met. The end of the program
+    wins: a return to no statement resolves to `CLIFF_TERMINATION`. With delayed branching on it
+    never stops in a delay slot. To step out of the innermost routine, pass the depth less one; to
+    step over a call, `step()` into it and pass the depth before it.
+*   **`skipBreakpointAtPc`** is `true` by default, as for every `simulate*` call: a run parked on a
+    breakpoint runs that instruction rather than stopping on it again. With `false` a breakpoint at
+    the program counter stops the call with `BREAKPOINT` before anything runs.
+*   **A step can be only an interrupt's entry**: the program counter goes to the handler and the
+    instruction it was on has not run. `getInterruptTaken()` is empty after every other step, so it
+    tells the two apart. An exception is not such a step: its instruction ran, and raised it.
+
+### The call stack
+
+`getCallStack(max?)` returns copies of the frames, oldest first, the newest `max` of them when it
+is given, and `getCallDepth()` how many there are, in constant time. Each frame has the instruction
+that made it (`callSite`), the routine entered (`toAddress`), where it returns (`returnAddress`),
+the stack and frame pointers and every register at the call, and its `kind`. `pc` is the program
+counter the call left: the address after it, or EPC for a handler.
+
+| Pushed by | `kind` | `callSite` | `returnAddress` |
+| --- | --- | --- | --- |
+| `jal`; `jalr` unless it links into `$zero`; a taken `bal`, `bgezal` or `bltzal` | `call` | the call | the return address the call wrote |
+| an exception the handler at 0x80000180 takes | `exception` | the instruction that raised it | EPC |
+| an interrupt | `interrupt` | the instruction it came before, which has not run | EPC, that same instruction |
+
+A frame is gone when:
+
+1.  `jr $ra` runs. It pops every frame down to the innermost call frame whose `returnAddress` is
+    where it jumps, or only the innermost call frame when none is, so a routine that changed `$ra`
+    to skip data after the call still returns. It never pops a handler frame.
+2.  Any other instruction leaves the program counter at the innermost frame's `returnAddress`, with
+    `$sp`, read unsigned, at or above the frame's `sp`. This ends a call returned by `jr $t0`, by
+    `jalr $zero, $ra` or by a jump, and a `bal` to the next instruction, which reads the program
+    counter, as soon as it has run. The stack pointer tells the levels of a recursion apart.
+3.  `eret` runs. It pops every frame down to the newest handler frame, and none when there is no
+    handler frame.
+
+A routine that neither runs a return nor arrives at its return address keeps its frame. The call
+stack holds the newest 131,072 frames and `getCallDepth()` goes on counting past them, so a `jal`
+used as a jump in a loop costs no more memory once it is that deep. Every push and pop is part of
+the undo history, and the frames are tracked whether the history records or not.
 
 `terminated` is read from the program's state, so it is right after `undo()` too: it is true once
 an exit has run or there is no statement at the program counter, and `getNextStatement()` then
@@ -538,7 +600,20 @@ so a fractional or `NaN` register index is truncated instead of rejected.
 *   **Calls and returns are part of the undo history**, so that `getCallStack()` after an `undo()`
     shows what it showed before the step: two new `BackStepAction`s, `CALL_RESTORE` and
     `RETURN_RESTORE`, take a call's frame off again and put a return's back. They change no value
-    the program sees; a host that handles every action needs a case for them.
+    the program sees; a host that handles every action needs a case for them. One instruction can
+    record several `RETURN_RESTORE`s, and a call and a return together.
+*   **`run(options)`** runs with breakpoints, a limit, `untilCallDepth` and `skipBreakpointAtPc`
+    in one call, beside the `simulate*` calls, which work as before. A new `StopReason`,
+    `CALL_DEPTH` (7), says a run reached its `untilCallDepth`; a host that names every reason needs
+    a case for it. See [Running and stopping](#running-and-stopping).
+*   **The call stack follows new rules.** An exception or interrupt that enters the handler pushes
+    a frame, and `eret` pops it. `jr $ra` pops down to the frame it returns to rather than only the
+    top one, and a call returned by any other instruction is popped when the program arrives at its
+    return address. `jalr $zero, ...` no longer pushes a frame. See [The call stack](#the-call-stack).
+*   **A frame has `callSite`, `returnAddress` and `kind`.** The frame of a `bal`, `bgezal` or `bltzal` has the
+    address after the branch as its `pc`, as a `jal`'s has, where it had the branch target.
+*   **`getCallDepth()`** returns the depth in constant time, and **`getCallStack(max)`** only the
+    newest `max` frames. The call stack holds the newest 131,072 frames; the depth counts past them.
 
 ## Migrating to 5.0.0
 
@@ -585,12 +660,15 @@ with delayed branching off, so programs assemble with `expansion`.
 *   `initialize(startAtMain: boolean)`: Initializes the simulator. If `startAtMain` is true, execution begins at the `main` label; otherwise, it starts at the first instruction. It stores the `argv` `setProgramArguments` set, if any.
 *   `setProgramArguments(argv: string[]): void`: The `argv` every later `initialize` stores above the stack. See [Program arguments](#program-arguments).
 *   `getProgramArgumentsLayout(): Int32Array`: Where the last `initialize` stored that `argv`: the range, argc, the array and each string's address. See [Program arguments](#program-arguments).
-*   `step(): Promise<StopReason>`: Executes a single instruction. See [Running and stopping](#running-and-stopping) for every run call's `StopReason` and `RuntimeError`.
+*   `step(): Promise<StopReason>`: Executes a single instruction, or enters an interrupt's handler, which `getInterruptTaken()` then reports. See [Running and stopping](#running-and-stopping) for every run call's `StopReason` and `RuntimeError`.
+*   `run(options?: RunOptions): Promise<StopReason>`: Runs until the program stops, a breakpoint, the limit, or the call stack is `untilCallDepth` frames deep or less. See [Running and stopping](#running-and-stopping).
 *   `simulate(): Promise<StopReason>`: Simulates the program until it stops.
 *   `simulateWithLimit(limit: number): Promise<StopReason>`: Simulates the program for a maximum of `limit` instructions.
 *   `simulateWithBreakpoints(breakpoints: number[]): Promise<StopReason>`: Simulates the program until a breakpoint is reached.  `breakpoints` is an array of memory addresses.
 *   `simulateWithBreakpointsAndLimit(breakpoints: number[], limit: number): Promise<StopReason>`: Simulates the program until a breakpoint is reached or the limit is reached.
 *   `getStopReason(): StopReason`: Why the last run call stopped, `NONE` after `initialize`.
+*   `getCallStack(max?: number): JsMipsStackFrame[]`: Copies of the call stack's frames, oldest first; the newest `max` when it is given. See [The call stack](#the-call-stack).
+*   `getCallDepth(): number`: How many frames deep the call stack is, in constant time, counting past the 131,072 it holds.
 *   `getInstructionsExecuted(): number`: How many instructions run calls have executed since the module loaded, the one that exited or failed included. It only grows, `undo()` included, and each of them is one entry of the undo history while it records, so the difference across a host's calls is how many entries they added.
 *   `getHeapStart(): number`: Where the heap, and so sbrk's first block, starts: 0x10040000, or the
     first page after static data in a `gnu-compiler-v1` program whose static data reaches past it.
@@ -634,6 +712,9 @@ with delayed branching off, so programs assemble with `expansion`.
 *   `JsBackStep`: Interface representing a back step in the simulation.
 *   `HandlerName`: Type representing the name of a handler function.
 *   `StopReason`: Enum of the reasons a run call stops.
+*   `RunOptions`: The options of `run`: `breakpoints`, `limit`, `untilCallDepth`, `skipBreakpointAtPc`.
+*   `JsMipsStackFrame`: One frame of the call stack: `pc`, `callSite`, `toAddress`, `returnAddress`, `sp`, `fp`, `registers` and `kind`.
+*   `CallFrameKind`: What pushed a frame: `'call'`, `'exception'` or `'interrupt'`.
 *   `RuntimeError`: The typed error a run call rejects with when the program fails; `isRuntimeError(error)` tells it apart.
 
 ### Dynamic instruction identities

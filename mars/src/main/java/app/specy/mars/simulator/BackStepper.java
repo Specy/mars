@@ -60,13 +60,15 @@ public class BackStepper {
     private static final int HEAP_RESTORE = 100;
     private static final int STACK_TOP_RESTORE = 101;
     /**
-     * A call (param1, the address it called): undoing it takes the frame it pushed off the call
-     * stack again.
+     * A call, or a handler entry (param1, the address it called): undoing it takes the frame it
+     * pushed off the call stack again. When the call stack was at its limit and the push took the
+     * oldest frame's slot, the entry keeps that frame to put back, in {@link BackStep#frame}.
      */
     private static final int CALL_RESTORE = 102;
     /**
-     * A return (param1, the address the popped frame had called): undoing it puts that frame back
-     * on the call stack. The entry keeps the frame until then, in {@link BackStep#frame}.
+     * A return (param1, the address the popped frame had called, 0 for a frame past the call
+     * stack's limit): undoing it puts that frame back on the call stack. The entry keeps the frame
+     * until then, in {@link BackStep#frame}. One instruction may pop several frames, an entry each.
      */
     private static final int RETURN_RESTORE = 103;
     private static final int DO_NOTHING = 10; // instruction does not write anything.
@@ -283,7 +285,12 @@ public class BackStepper {
                     } else if (step.action == RETURN_RESTORE) {
                         // the frame goes back on the call stack, and the entry holds the spare one
                         // its slot gives back, for a later return to take
-                        step.frame = Stack.undoReturn(step.frame);
+                        if (step.keepsFrame) step.frame = Stack.undoReturn(step.frame);
+                        else Stack.undoReturn(null);
+                    } else if (step.action == CALL_RESTORE) {
+                        // the frame comes off again; one the limit pushed out goes back in its slot
+                        if (step.keepsFrame) step.frame = Stack.undoEvictingCall(step.frame);
+                        else Stack.undoCall();
                     } else {
                         applyRestore(step.action, step.param1, step.param2, step.param3);
                     }
@@ -326,9 +333,6 @@ public class BackStepper {
                 break;
             case PC_RESTORE:
                 RegisterFile.setProgramCounter(param1);
-                break;
-            case CALL_RESTORE:
-                Stack.undoCall();
                 break;
             case COPROC0_REGISTER_RESTORE:
                 Coprocessor0.updateRegister(param1, param2);
@@ -609,19 +613,28 @@ public class BackStepper {
         backSteps.push(RANDOM_STREAM_RESTORE, pc(), index, high, low);
     }
 
-    /** Takes the frame a call pushes off the call stack again: {@code toAddress} is where it called. */
-    public void addCallRestore(int toAddress) {
-        backSteps.push(CALL_RESTORE, pc(), toAddress);
+    /**
+     * Takes the frame a call pushes off the call stack again: {@code toAddress} is where it called.
+     * {@code evicted} is the oldest frame held when the call stack is at its limit and the push takes
+     * its slot, which the entry keeps until it is undone; null otherwise.
+     *
+     * @return for an {@code evicted} frame, the frame object the call stack's slot takes in exchange:
+     * one the history no longer needs, or null, or {@code evicted} itself when nothing was recorded;
+     * null otherwise
+     */
+    public StackFrame addCallRestore(int toAddress, StackFrame evicted) {
+        return backSteps.pushFrame(CALL_RESTORE, pc(), toAddress, evicted);
     }
 
     /**
-     * Puts back the frame a return pops, which the entry keeps until it is undone.
+     * Puts back the frame a return pops, which the entry keeps until it is undone; null for a frame
+     * past the call stack's limit, of which only the depth goes back.
      *
      * @return the frame object the call stack's slot takes in exchange: one the history no longer
      * needs, or null, or {@code frame} itself when nothing was recorded and the call stack keeps it
      */
     public StackFrame addReturnRestore(StackFrame frame) {
-        return backSteps.pushReturn(pc(), frame);
+        return backSteps.pushFrame(RETURN_RESTORE, pc(), frame == null ? 0 : frame.getToAddress(), frame);
     }
 
     public int addDoNothing(int pc) {
@@ -652,12 +665,16 @@ public class BackStepper {
         // They live in the entry rather than in a slot each, so that a poke of a hundred bytes is
         // still one slot of the history and is never evicted in part.
         private int[][] pokeWrites;
-        // A RETURN_RESTORE's frame, which undoing it puts back on the call stack. Otherwise a frame
-        // object nothing else holds any more, or null: the one an undone return's slot gave back,
-        // or that of an entry evicted or overwritten since. assign() leaves it, so that it costs
-        // the ordinary entries nothing, and pushReturn() hands it to the call stack in exchange for
-        // the frame it keeps.
+        // The frame a RETURN_RESTORE popped, or the one a CALL_RESTORE pushed out at the call
+        // stack's limit, which undoing it puts back (keepsFrame). Otherwise a frame object nothing
+        // else holds any more, or null: the one an undone entry's slot gave back, or that of an
+        // entry evicted or overwritten since. assign() leaves it, so that it costs the ordinary
+        // entries nothing, and pushFrame() hands it to the call stack in exchange for the frame it
+        // keeps.
         private StackFrame frame;
+        // Whether a CALL_RESTORE or RETURN_RESTORE keeps a frame to put back in frame, rather than a
+        // spare: set by pushFrame() for those two actions, the only ones that read it.
+        private boolean keepsFrame;
 
 
         /**
@@ -854,13 +871,16 @@ public class BackStepper {
             push(act, programCounter, parm1, parm2, 0);
         }
 
-        // A return's entry, which keeps the frame the return popped (see BackStep.frame).
-        private StackFrame pushReturn(int programCounter, StackFrame popped) {
-            if (pokeGroup != NO_POKE_GROUP || !advance()) return popped;
+        // A call's or a return's entry, which keeps the frame given, if any (see BackStep.frame),
+        // and hands back the spare its slot held in exchange. Without a frame the spare stays.
+        private StackFrame pushFrame(int act, int programCounter, int address, StackFrame kept) {
+            if (pokeGroup != NO_POKE_GROUP || !advance()) return kept;
             BackStep step = slot();
+            step.assign(act, programCounter, address, 0, 0);
+            step.keepsFrame = kept != null;
+            if (kept == null) return null;
             StackFrame spare = step.frame;
-            step.assign(RETURN_RESTORE, programCounter, popped.getToAddress(), 0, 0);
-            step.frame = popped;
+            step.frame = kept;
             return spare;
         }
 

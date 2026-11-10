@@ -4,6 +4,8 @@ import java.util.*;
 
 import app.specy.mars.*;
 import app.specy.mars.mips.hardware.*;
+// the call stack, not java.util's
+import app.specy.mars.mips.hardware.Stack;
 import app.specy.mars.mips.instructions.*;
 import app.specy.mars.mips.io.MIPSIOError;
 import app.specy.mars.mips.io.MIPSIOFailure;
@@ -63,7 +65,12 @@ public class Simulator extends Observable {
         NORMAL_TERMINATION, // an exit service
         CLIFF_TERMINATION, // run off bottom of program
         PAUSE,
-        STOP
+        STOP,
+        /**
+         * The call stack was {@code untilCallDepth} frames deep or less, before the instruction at
+         * the program counter ran: see {@link #simulate(MIPSprogram, int, int, int[], int, boolean)}.
+         */
+        CALL_DEPTH
     }
 
     /**
@@ -121,7 +128,26 @@ public class Simulator extends Observable {
 
     public Reason simulate(MIPSprogram p, int pc, int maxSteps, int[] breakPoints)
             throws ProcessingException {
-        simulatorThread = new SimThread(p, pc, maxSteps, breakPoints);
+        return simulate(p, pc, maxSteps, breakPoints, -1, false);
+    }
+
+    /**
+     * {@link #simulate(MIPSprogram, int, int, int[])}, with two more ways to stop.
+     *
+     * @param untilCallDepth          stop with {@link Reason#CALL_DEPTH}, before running the
+     *                                instruction at the program counter, whenever the call stack is
+     *                                this many frames deep or less ({@link Stack#getCallDepth()}):
+     *                                tested when the call begins and after every instruction, before
+     *                                the breakpoint, pause and limit tests, and never in a delay
+     *                                slot. The end of the program wins. -1 (or any negative number)
+     *                                for none.
+     * @param checkBreakpointAtStart  whether a breakpoint at {@code pc} stops the call before it
+     *                                runs anything; otherwise, as always, the first instruction of a
+     *                                call is never checked
+     */
+    public Reason simulate(MIPSprogram p, int pc, int maxSteps, int[] breakPoints, int untilCallDepth,
+                           boolean checkBreakpointAtStart) throws ProcessingException {
+        simulatorThread = new SimThread(p, pc, maxSteps, breakPoints, untilCallDepth, checkBreakpointAtStart);
         simulatorThread.construct();
         ProcessingException pe = simulatorThread.pe;
         boolean done = simulatorThread.done;
@@ -247,6 +273,8 @@ public class Simulator extends Observable {
         private MIPSprogram p;
         private int pc, maxSteps;
         private int[] breakPoints;
+        private final int untilCallDepth;
+        private final boolean checkBreakpointAtStart;
         private boolean done;
         private ProcessingException pe;
         private volatile boolean stop = false;
@@ -265,12 +293,16 @@ public class Simulator extends Observable {
          * @param starter     the GUI component responsible for this call, usually GO or
          *                    STEP. null if none.
          */
-        SimThread(MIPSprogram p, int pc, int maxSteps, int[] breakPoints) {
+        SimThread(MIPSprogram p, int pc, int maxSteps, int[] breakPoints, int untilCallDepth,
+                  boolean checkBreakpointAtStart) {
             super();
             this.p = p;
             this.pc = pc;
             this.maxSteps = maxSteps;
             this.breakPoints = breakPoints;
+            // any negative depth asks for nothing, which -1 says in one comparison per instruction
+            this.untilCallDepth = untilCallDepth < 0 ? -1 : untilCallDepth;
+            this.checkBreakpointAtStart = checkBreakpointAtStart;
             this.done = false;
             this.pe = null;
         }
@@ -372,6 +404,22 @@ public class Simulator extends Observable {
             // every instruction.
             boolean backSteppingEnabled = Globals.getSettingsProperties().getBackSteppingEnabled();
             BackStepper backStepper = Globals.program.getBackStepper();
+            int untilCallDepth = this.untilCallDepth;
+            // and so is delayed branching, which decides where an instruction's arrival is read
+            boolean delayedBranching = Globals.getSettingsProperties().getDelayedBranchingEnabled();
+
+            // Before anything runs: the call stack may already be shallow enough, and a breakpoint
+            // at the program counter stops the call when the host asks for it. With no statement
+            // here the loop does not run and the program has ended, which wins.
+            if (statement != null) {
+                if (Stack.getCallDepth() <= untilCallDepth && !DelayedBranch.isTriggered()) {
+                    return stopBefore(Reason.CALL_DEPTH, maxSteps, this.pc);
+                }
+                if (checkBreakpointAtStart && breakPoints != null
+                        && Arrays.binarySearch(breakPoints, this.pc) >= 0) {
+                    return stopBefore(Reason.BREAKPOINT, maxSteps, this.pc);
+                }
+            }
 
             while (statement != null) {
                 pc = RegisterFile.getProgramCounter(); // added: 7/26/06 (explanation above)
@@ -431,6 +479,9 @@ public class Simulator extends Observable {
                             } catch (AddressErrorException aee) {
                             } // will not occur with this well-known addres
                             if (exceptionHandler != null) {
+                                // the handler is a frame of its own, returning where eret goes
+                                Stack.pushHandler(StackFrame.KIND_EXCEPTION, pc, Memory.exceptionHandlerAddress,
+                                        Coprocessor0.getStoredValue(Coprocessor0.EPC));
                                 RegisterFile.setProgramCounter(Memory.exceptionHandlerAddress);
                             } else {
                                 pe.setAddress(pc);
@@ -450,6 +501,17 @@ public class Simulator extends Observable {
                         // Count moves with every instruction, an interrupt's entry included, so
                         // the timer's match joins the instruction that reached it.
                         if (Coprocessor0.timerArmed) Coprocessor0.timerTick();
+                        // A call is over when the program arrives at its return address by any
+                        // instruction (Stack, rule 2), read where the program counter will be once
+                        // a delayed branch whose slot this was has gone. Inside the instruction,
+                        // so that its undo puts the frame back.
+                        int arrival = RegisterFile.getProgramCounter();
+                        if (delayedBranching && DelayedBranch.isTriggered()) {
+                            arrival = DelayedBranch.getBranchTargetAddress();
+                        }
+                        if (arrival == Stack.returnWatch) {
+                            Stack.arrive(arrival, RegisterFile.getStackPointerRegister().getValueNoNotify());
+                        }
                         backStepper.endInstruction();
                         instructionsRun++;
                     }
@@ -463,6 +525,16 @@ public class Simulator extends Observable {
                     DelayedBranch.trigger();
                 } //////////////////////////////////////////////////////////////////////
 
+                // The call stack is shallow enough: before the breakpoint, pause and limit tests,
+                // so that the instruction that completed a step out or over is never reported as
+                // anything else. Never in a delay slot, whose branch belongs to the instruction
+                // before; the end of the program wins.
+                if (Stack.getCallDepth() <= untilCallDepth && !DelayedBranch.isTriggered()) {
+                    if (noStatementAt(RegisterFile.getProgramCounter())) {
+                        return dropOffBottom(maxSteps, pc);
+                    }
+                    return stopBefore(Reason.CALL_DEPTH, maxSteps, pc);
+                }
                 // Return if we've reached a breakpoint. Checked before a pause, as RARS does: the
                 // next run call executes its first instruction unchecked, so a pause reported here
                 // would let the run that resumes from it walk straight through this breakpoint.
@@ -566,10 +638,20 @@ public class Simulator extends Observable {
                 throw failure;
             }
             Coprocessor0.enterInterrupt(pc, pending, Memory.exceptionHandlerAddress);
+            // the handler is a frame of its own, returning to the interrupted instruction
+            Stack.pushHandler(StackFrame.KIND_INTERRUPT, pc, Memory.exceptionHandlerAddress, pc);
             // the rest of the pass is an instruction's: a breakpoint on the handler's first
             // instruction stops the run there, and a Step ends on it
             RegisterFile.setProgramCounter(Memory.exceptionHandlerAddress);
             return true;
+        }
+
+        /** Ends the call, not the program, with the instruction at the program counter still to run. */
+        private Object stopBefore(Reason reason, int maxSteps, int pc) {
+            this.constructReturnReason = reason;
+            this.done = false;
+            Simulator.getInstance().notifyObserversOfExecutionStop(maxSteps, pc);
+            return new Boolean(done);
         }
 
         /** The program counter "fell off the end" of the program: there is no statement to run. */

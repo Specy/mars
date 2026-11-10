@@ -248,6 +248,17 @@ public class MIPS {
         return Stack.getCallStack().toArray(new StackFrame[0]);
     }
 
+    /** The newest {@code max} frames of the call stack, oldest first; all of them when it is negative. */
+    public StackFrame[] getCallStack(int max){
+        requireAssembled();
+        return Stack.getCallStack(max).toArray(new StackFrame[0]);
+    }
+
+    /** How many frames deep the call stack is, those past its limit included; in constant time. */
+    public int getCallDepth() {
+        return Stack.getCallDepth();
+    }
+
     /**
      * The label at an address: the entry unit's own or a global, else one of another linked unit's
      * own labels, such as a static function's, which only that unit's table holds.
@@ -279,6 +290,18 @@ public class MIPS {
 
     public Simulator.Reason step() throws ProcessingException {
         return run(() -> this.main.simulateStepAtPC());
+    }
+
+    /**
+     * Runs from the program counter until the program stops, a breakpoint, a pause, {@code limit}
+     * instructions (none when 0 or less), or the call stack is {@code untilCallDepth} frames deep or
+     * less (none when negative). A breakpoint at the program counter stops the call before anything
+     * runs unless {@code skipBreakpointAtPc}. See
+     * {@link Simulator#simulate(MIPSprogram, int, int, int[], int, boolean)}.
+     */
+    public Simulator.Reason run(int[] breakpoints, int limit, int untilCallDepth, boolean skipBreakpointAtPc)
+            throws ProcessingException {
+        return run(() -> this.main.simulateFromPC(breakpoints, limit, untilCallDepth, !skipBreakpointAtPc));
     }
 
     private interface Run {

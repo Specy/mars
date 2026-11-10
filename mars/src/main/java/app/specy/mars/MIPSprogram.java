@@ -492,6 +492,20 @@ public class MIPSprogram {
    }
 
    /**
+    * {@link #simulateFromPC(int[], int)}, stopping too when the call stack is {@code untilCallDepth}
+    * frames deep or less, and at a breakpoint on the program counter before anything runs when
+    * {@code checkBreakpointAtStart}: see
+    * {@link Simulator#simulate(MIPSprogram, int, int, int[], int, boolean)}.
+    */
+   public Simulator.Reason simulateFromPC(int[] breakPoints, int maxSteps, int untilCallDepth,
+                                          boolean checkBreakpointAtStart) throws ProcessingException {
+      steppedExecution = false;
+      Simulator sim = Simulator.getInstance();
+      return sim.simulate(this, RegisterFile.getProgramCounter(), maxSteps, breakPoints, untilCallDepth,
+            checkBreakpointAtStart);
+   }
+
+   /**
     * Simulates execution of the MIPS program. Program must have already been
     * assembled.
     * Begins simulation at current program counter address and executes one step.

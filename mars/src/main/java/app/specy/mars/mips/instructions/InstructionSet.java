@@ -825,8 +825,11 @@ public class InstructionSet {
                             public void simulate(ProgramStatement statement) throws ProcessingException {
                                 int[] operands = statement.getOperands();
                                 if (RegisterFile.getValue(operands[0]) >= 0) { // the "and link" part
-                                    processReturnAddress(31);// RegisterFile.updateRegister("$ra",RegisterFile.getProgramCounter());
-                                    Stack.pushCallStack(processBranch(operands[1]));
+                                    int returnAddress = processReturnAddress(31);
+                                    // pushed before the branch moves the program counter, so that
+                                    // the frame records the address after the branch
+                                    Stack.pushCall(branchTarget(operands[1]), returnAddress);
+                                    processBranch(operands[1]);
                                 }
                             }
                         }));
@@ -878,8 +881,9 @@ public class InstructionSet {
                             public void simulate(ProgramStatement statement) throws ProcessingException {
                                 int[] operands = statement.getOperands();
                                 if (RegisterFile.getValue(operands[0]) < 0) { // the "and link" part
-                                    processReturnAddress(31);// RegisterFile.updateRegister("$ra",RegisterFile.getProgramCounter());
-                                    Stack.pushCallStack(processBranch(operands[1]));
+                                    int returnAddress = processReturnAddress(31);
+                                    Stack.pushCall(branchTarget(operands[1]), returnAddress);
+                                    processBranch(operands[1]);
                                 }
                             }
                         }));
@@ -1131,9 +1135,9 @@ public class InstructionSet {
                         new SimulationCode() {
                             public void simulate(ProgramStatement statement) throws ProcessingException {
                                 int[] operands = statement.getOperands();
-                                //pop stack if return address
-                                if(operands[0] == 31){
-                                    Stack.popCallStack();
+                                // a return: the frames it leaves come off the call stack
+                                if (operands[0] == 31) {
+                                    Stack.returnThrough(RegisterFile.getValue(31));
                                 }
                                 processJump(RegisterFile.getValue(operands[0]));
                             }
@@ -1146,10 +1150,10 @@ public class InstructionSet {
                         new SimulationCode() {
                             public void simulate(ProgramStatement statement) throws ProcessingException {
                                 int[] operands = statement.getOperands();
-                                processReturnAddress(31);// RegisterFile.updateRegister(31, RegisterFile.getProgramCounter());
+                                int returnAddress = processReturnAddress(31);
                                 int address = ((RegisterFile.getProgramCounter() & 0xF0000000)
                                         | (operands[0] << 2));
-                                Stack.pushCallStack(address);
+                                Stack.pushCall(address, returnAddress);
                                 processJump(address);
                             }
                         }));
@@ -1161,9 +1165,11 @@ public class InstructionSet {
                         new SimulationCode() {
                             public void simulate(ProgramStatement statement) throws ProcessingException {
                                 int[] operands = statement.getOperands();
-                                processReturnAddress(operands[0]);// RegisterFile.updateRegister(operands[0],
-                                // RegisterFile.getProgramCounter());
-                                Stack.pushCallStack(RegisterFile.getValue(operands[1]));
+                                int returnAddress = processReturnAddress(operands[0]);
+                                // linking into $zero keeps no return address: a jump, not a call
+                                if (operands[0] != 0) {
+                                    Stack.pushCall(RegisterFile.getValue(operands[1]), returnAddress);
+                                }
                                 processJump(RegisterFile.getValue(operands[1]));
                             }
                         }));
@@ -1175,8 +1181,8 @@ public class InstructionSet {
                         new SimulationCode() {
                             public void simulate(ProgramStatement statement) throws ProcessingException {
                                 int[] operands = statement.getOperands();
-                                processReturnAddress(31);// RegisterFile.updateRegister(31, RegisterFile.getProgramCounter());
-                                Stack.pushCallStack(RegisterFile.getValue(operands[0]));
+                                int returnAddress = processReturnAddress(31);
+                                Stack.pushCall(RegisterFile.getValue(operands[0]), returnAddress);
                                 processJump(RegisterFile.getValue(operands[0]));
                             }
                         }));
@@ -2639,6 +2645,8 @@ public class InstructionSet {
                                 Coprocessor0.updateRegister(Coprocessor0.STATUS,
                                         Binary.clearBit(Coprocessor0.getValue(Coprocessor0.STATUS),
                                                 Coprocessor0.EXCEPTION_LEVEL));
+                                // the handler, and every frame above it, is over
+                                Stack.returnFromHandler();
                                 RegisterFile.setProgramCounter(Coprocessor0.getValue(Coprocessor0.EPC));
                             }
                         }));
@@ -2940,6 +2948,11 @@ public class InstructionSet {
     // even if it isn't. This mod must work in conjunction with
     // ProgramStatement.java, buildBasicStatementFromBasicInstruction() method near
     // the bottom (currently line 194, heavily commented).
+
+    /** Where a branch at the instruction running goes: see processBranch, which also takes it. */
+    private int branchTarget(int displacement) {
+        return RegisterFile.getProgramCounter() + (displacement << 2);
+    }
 
     private int processBranch(int displacement) {
         if (Globals.getSettingsProperties().getDelayedBranchingEnabled()) {

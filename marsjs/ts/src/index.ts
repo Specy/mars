@@ -124,14 +124,17 @@ export type JsInstructionToken = {
 
 
 /**
- * Why a run call (`step`, `simulate`, `simulateWithLimit`, `simulateWithBreakpoints`,
+ * Why a run call (`step`, `run`, `simulate`, `simulateWithLimit`, `simulateWithBreakpoints`,
  * `simulateWithBreakpointsAndLimit`) stopped. The same enum, with the same values, as
  * `@specy/risc-v`'s: MARS numbered its reasons from 1 and had one for both pause and stop.
  */
 export enum StopReason {
     /** No run call has stopped since the program was initialized; only `getStopReason` reports it. */
     NONE = -1,
-    /** A breakpoint address was reached; the instruction there has not run. */
+    /**
+     * A breakpoint address was reached; the instruction there has not run. A `run` with
+     * `skipBreakpointAtPc: false` also stops on one at the program counter before running anything.
+     */
     BREAKPOINT,
     /** Never returned: a runtime failure rejects the run call with a `RuntimeError` instead. */
     EXCEPTION,
@@ -144,7 +147,43 @@ export enum StopReason {
     /** `pause()` ended the call after the instruction whose handler called it. */
     PAUSE,
     /** Not reachable through this package. */
-    STOP
+    STOP,
+    /**
+     * A `run` with `untilCallDepth: n` found the call stack `n` frames deep or less, before
+     * running the instruction at the program counter: when the call began, or after the instruction
+     * that returned. It is tested ahead of breakpoints, `pause()` and the limit, so the instruction
+     * that completes a step out is never reported as any of those. The end of the program wins: a
+     * return to no statement is `CLIFF_TERMINATION`.
+     */
+    CALL_DEPTH = 7,
+}
+
+/**
+ * What pushed a call stack frame: a call (`jal`; `jalr` unless it links into `$zero`; a taken
+ * `bal`, `bgezal` or `bltzal`), or an exception or interrupt entering the program's handler at
+ * 0x80000180.
+ */
+export type CallFrameKind = 'call' | 'exception' | 'interrupt'
+
+/** The options of `JsMips.run`. Every one may be left out. */
+export type RunOptions = {
+    /** Addresses where the run stops before running the instruction there. None by default. */
+    breakpoints?: number[]
+    /** The most instructions to run, which ends the call with `MAX_STEPS`. None when left out, 0 or less. A fraction is rounded down. */
+    limit?: number
+    /**
+     * Stop with `CALL_DEPTH`, before running the instruction at the program counter, whenever
+     * `getCallDepth()` is this or less: when the call begins and after every instruction. A step out
+     * of the innermost routine passes the depth less one; a step over a call passes the depth before
+     * it. None when left out.
+     */
+    untilCallDepth?: number
+    /**
+     * Whether a breakpoint at the program counter is passed over, so that a run parked on one runs
+     * its instruction: `true` by default, as every `simulate*` call does. With `false` the call
+     * stops on it with `BREAKPOINT` having run nothing.
+     */
+    skipBreakpointAtPc?: boolean
 }
 
 /**
@@ -510,15 +549,45 @@ function programArgumentWords(argv: readonly string[]): string[] {
     return [...argv]
 }
 
+/**
+ * One frame of the call stack (`getCallStack`).
+ *
+ * A frame is pushed by a call, and by an exception or interrupt that enters the program's handler
+ * (`kind`). It is gone when:
+ * 1. `jr $ra` runs: it pops every frame down to the innermost call frame whose `returnAddress` is
+ *    where it jumps, or only the innermost call frame when none is. It never pops a handler frame.
+ * 2. Any other instruction leaves the program counter at the innermost frame's `returnAddress` with
+ *    `$sp`, unsigned, at or above the frame's `sp`. That ends a call returned by `jr $t0`, by a jump
+ *    or by `jalr $zero, $ra`, and a `bal` to the next instruction at once.
+ * 3. `eret` runs: it pops every frame down to the newest handler frame.
+ *
+ * The call stack holds the newest 131,072 frames; `getCallDepth()` goes on counting past them.
+ * Every push and pop is part of the undo history.
+ */
 export type JsMipsStackFrame = {
     /**
-     * The program counter value at the moment the stack frame was created.
+     * For a call, the program counter as the calling instruction left it before jumping: the
+     * address after the call (after its delay slot too when delayed branching is on). For a handler,
+     * the instruction it interrupted or that raised the exception, which EPC holds.
      */
     pc: number;
     /**
-     * The address of the target instruction.
+     * The instruction that made the entry: the call, the instruction that raised the exception, or
+     * the instruction the interrupt came before, which has not run.
+     */
+    callSite: number;
+    /**
+     * The routine the call entered, or the handler's address (0x80000180).
      */
     toAddress: number;
+    /**
+     * Where the frame returns to: the return address the call wrote, or EPC for a handler.
+     */
+    returnAddress: number;
+    /**
+     * What pushed the frame.
+     */
+    kind: CallFrameKind;
     /**
      * The stack pointer value at the moment the stack frame was created.
      */
@@ -614,15 +683,17 @@ export enum BackStepAction {
     HEAP_RESTORE = 100,
     STACK_TOP_RESTORE,
     /**
-     * A call (`jal`, `jalr`, `bal`, `bgezal`, `bltzal`) pushed a frame on the call stack: undoing it
-     * takes the frame off again. `param1` is the address it called. Debugger bookkeeping, not a
-     * value the program wrote, so `oldValue` and `newValue` are `'0'`.
+     * A call (`jal`, `jalr`, `bal`, `bgezal`, `bltzal`) or a handler entry pushed a frame on the call
+     * stack: undoing it takes the frame off again, and puts back the oldest frame when the call stack
+     * was at its limit. `param1` is the address it called. Debugger bookkeeping, not a value the
+     * program wrote, so `oldValue` and `newValue` are `'0'`.
      */
     CALL_RESTORE,
     /**
-     * A return (`jr $ra`) popped a frame off the call stack: undoing it puts the frame back, so that
-     * `getCallStack` after an Undo shows what it showed before the step. `param1` is the address
-     * the frame had called; `oldValue` and `newValue` are `'0'`.
+     * A return popped a frame off the call stack: undoing it puts the frame back, so that
+     * `getCallStack` after an Undo shows what it showed before the step. An instruction that pops
+     * several frames records one each. `param1` is the address the frame had called, 0 for a frame
+     * past the call stack's limit; `oldValue` and `newValue` are `'0'`.
      */
     RETURN_RESTORE,
 }
@@ -879,8 +950,21 @@ export interface JsMips {
      * Rejects with a `RuntimeError` when the program fails. The promise settles on a microtask
      * unless an IO handler returned a promise, in which case it settles once that handler and the
      * rest of the instruction have finished.
+     *
+     * A step can be an interrupt's entry instead: the program counter goes to the handler and the
+     * instruction it was on has not run. `getInterruptTaken()` is not empty after exactly those
+     * steps. An exception is not one: the instruction ran, and raised it.
      */
     step(): Promise<StopReason>;
+
+    /**
+     * Runs from the program counter until the program stops, or one of the `options` stops the
+     * call: a breakpoint, the limit, or the call stack back at a depth (`untilCallDepth`). Resolves
+     * to why it stopped, rejects with a `RuntimeError` when the program fails, and settles as `step`
+     * does. With no options it runs as `simulate()`. See `RunOptions` and
+     * [Running and stopping](#running-and-stopping) in the README.
+     */
+    run(options?: RunOptions): Promise<StopReason>;
 
     /**
      * Why the last run call stopped: `NONE` when none has since the program was initialized, and
@@ -912,7 +996,8 @@ export interface JsMips {
      * then resolves to `PAUSE` once the instruction and its handler have finished, or to
      * `BREAKPOINT` when the next instruction is a breakpoint, or to `CLIFF_TERMINATION` when there
      * is none. Pausing at a `sleep` (32) is how a host ends its run call where the program's frame
-     * does. Without a call in flight it does nothing.
+     * does. A `run` whose `untilCallDepth` the instruction reached resolves to `CALL_DEPTH` instead,
+     * which comes first. Without a call in flight it does nothing.
      */
     pause(): void;
 
@@ -1106,10 +1191,18 @@ export interface JsMips {
 
 
     /**
-     * Gets the call stack.
-     * @returns An array of memory addresses representing the call stack.
+     * Copies of the call stack's frames, oldest first: the newest `max` of them, or every frame it
+     * holds when `max` is left out. It holds the newest 131,072, so with a deeper stack it starts
+     * past the outermost ones. Throws a `TypeError` when `max` is not a whole number of 0 or more.
      */
-    getCallStack(): JsMipsStackFrame[]
+    getCallStack(max?: number): JsMipsStackFrame[]
+
+    /**
+     * How many frames deep the call stack is, in constant time: the frames past its limit of
+     * 131,072 included, so it can exceed what `getCallStack()` returns. See `JsMipsStackFrame` for
+     * when a frame is pushed and when it is gone. Undo puts it back.
+     */
+    getCallDepth(): number
 
 
 
@@ -1540,7 +1633,55 @@ export function makeMipsFromFiles(files: MIPSSourceSet, entryFile: string, optio
     // the Java side reads each word as a string, so anything else is refused here, by name
     const setProgramArguments = core.setProgramArguments
     core.setProgramArguments = (argv: string[]) => setProgramArguments.call(core, programArgumentWords(argv))
+    // the Java side takes the options one by one, as ints and a flag, so they are checked and
+    // spelled out here
+    const generated = core as unknown as GeneratedCore
+    core.run = (options?: RunOptions) => {
+        const [breakpoints, limit, untilCallDepth, skipBreakpointAtPc] = runArguments(options)
+        return generated.runWith(breakpoints, limit, untilCallDepth, skipBreakpointAtPc)
+    }
+    core.getCallStack = (max?: number) => {
+        if (max === undefined) return generated.getCallStackUpTo(-1)
+        if (typeof max !== 'number' || !Number.isInteger(max) || max < 0) {
+            throw new TypeError('max must be a whole number of frames, 0 or more')
+        }
+        return generated.getCallStackUpTo(Math.min(max, 0x7fffffff))
+    }
     return core
+}
+
+/** The exports of a core that `makeMipsFromFiles` wraps rather than passes on. */
+type GeneratedCore = {
+    runWith(breakpoints: number[], limit: number, untilCallDepth: number, skipBreakpointAtPc: boolean): Promise<StopReason>
+    getCallStackUpTo(max: number): JsMipsStackFrame[]
+}
+
+/**
+ * `RunOptions` as the Java side takes them, as `@specy/risc-v` reads them: -1 for no limit and no
+ * depth, a fraction rounded down.
+ */
+function runArguments(options: RunOptions | undefined): [number[], number, number, boolean] {
+    if (options === undefined) options = {}
+    if (options === null || typeof options !== 'object' || Array.isArray(options)) {
+        throw new TypeError('Run options must be an object')
+    }
+    const breakpoints = options.breakpoints ?? []
+    if (!Array.isArray(breakpoints) || breakpoints.some(address => typeof address !== 'number')) {
+        throw new TypeError('breakpoints must be an array of addresses')
+    }
+    const whole = (name: string, value: number | undefined) => {
+        if (value === undefined) return -1
+        if (typeof value !== 'number' || Number.isNaN(value)) throw new TypeError(`${name} must be a number`)
+        return value < 0 ? -1 : Math.floor(Math.min(value, 0x7fffffff))
+    }
+    // a limit past what an int holds is no limit; a depth past it is reached at once either way
+    const limit = options.limit !== undefined && options.limit > 0x7fffffff ? -1 : whole('limit', options.limit)
+    const untilCallDepth = whole('untilCallDepth', options.untilCallDepth)
+    const skipBreakpointAtPc = options.skipBreakpointAtPc ?? true
+    if (typeof skipBreakpointAtPc !== 'boolean') throw new TypeError('skipBreakpointAtPc must be a boolean')
+    // an address is a signed word on the Java side, as the program counter reads, so one in .ktext
+    // given unsigned still matches
+    return [breakpoints.map(address => address | 0), limit, untilCallDepth, skipBreakpointAtPc]
 }
 
 /**

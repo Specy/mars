@@ -4,8 +4,8 @@
 // reuses its frames from call to call; undoing anything else leaves it alone, a branch at the
 // address calls return to included. Checked against the frames recorded on the way forward, after
 // every step of a walk back and forth through calls, returns, a function pointer, a recursion and a
-// timer interrupt whose handler calls, with a history large enough for the whole run and with one
-// so small that its entries are reused all the time.
+// timer interrupt, a frame of its own, whose handler calls, with a history large enough for the
+// whole run and with one so small that its entries are reused all the time.
 import assert from 'node:assert/strict'
 import { MIPS, registerHandlers, unimplementedHandler } from '../dist/index.mjs'
 
@@ -75,7 +75,8 @@ function core(undoSize) {
 
 /** Everything a frame says, so that two call stacks compare by their text. */
 const frames = mips => JSON.stringify(Array.from(mips.getCallStack(), frame => ({
-    pc: frame.pc, to: frame.toAddress, sp: frame.sp, fp: frame.fp, registers: Array.from(frame.registers),
+    pc: frame.pc, site: frame.callSite, to: frame.toAddress, ret: frame.returnAddress, kind: frame.kind, sp: frame.sp, fp: frame.fp,
+    registers: Array.from(frame.registers),
 })))
 
 // The run forward: the frames after each step, and where the stack was deepest.
@@ -91,10 +92,17 @@ while (!forward.terminated) {
 }
 const depths = states.map(state => JSON.parse(state).length)
 const tops = states.map(state => JSON.parse(state).at(-1)?.to)
-assert.equal(Math.max(...depths), 5, 'r five times deep')
+const handling = states.map(state => JSON.parse(state).some(frame => frame.kind === 'interrupt'))
+assert.equal(Math.max(...depths.filter((_, i) => !handling[i])), 5, 'r five times deep')
 assert.ok(handled > 0, 'the timer interrupted the program')
-assert.ok(depths[handled] >= 2 && tops[handled] === forward.getAddressOfLabel('r'), 'inside r')
+const entry = JSON.parse(states[handled])
+assert.equal(entry.at(-1).kind, 'interrupt', 'the handler is a frame')
+assert.equal(entry.at(-1).to, HANDLER)
+assert.ok(entry.length >= 3 && entry.at(-2).to === forward.getAddressOfLabel('r'), 'inside r')
+assert.equal(entry.at(-1).ret, entry.at(-1).pc, 'returning to the interrupted instruction')
 assert.equal(tops[handled + 2], forward.getAddressOfLabel('kf'), 'and the handler called kf')
+const left = handling.indexOf(false, handled)
+assert.ok(left > handled + 2 && depths[left] === depths[handled] - 1, 'eret ends the handler\'s frame')
 assert.equal(forward.getRegisterValue('$s2'), 1)
 assert.equal(depths.at(-1), 0, 'every call returned')
 
