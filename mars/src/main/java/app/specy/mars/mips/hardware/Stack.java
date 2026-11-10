@@ -6,6 +6,7 @@ import app.specy.mars.simulator.BackStepper;
 import app.specy.mars.simulator.Simulator;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -51,6 +52,8 @@ public class Stack {
     private static final int MASK = LIMIT - 1;
     /** {@link #returnWatch} with no frame held. Any value would do: {@link #arrive} checks again. */
     private static final int NO_WATCH = 0;
+    // marks an empty slot of the return-address table: a return address is a word address, never 1
+    private static final int NO_KEY = 1;
 
     /**
      * A ring: frame {@code i}, counted from the oldest of the whole depth, is in slot
@@ -74,6 +77,16 @@ public class Stack {
      * frame too.
      */
     private static double returnedAt;
+    // How many handler frames are held, and how many held call frames return to each address: an
+    // open-addressing table of int keys, which allocates nothing as calls come and go, made on the
+    // first call. A key stays once used, at a count of 0; a return address is the address after a
+    // call, so the table never holds more keys than the program has calls. With them a return that
+    // no held frame matches pops the innermost frame without looking through the others, and an
+    // `eret` with no handler frame held pops nothing without looking either.
+    private static int handlersHeld;
+    private static int[] returnKeys;
+    private static int[] returnCounts;
+    private static int returnKeysUsed;
 
     /** The number of frames, those past the limit included. */
     public static int getCallDepth() {
@@ -106,6 +119,7 @@ public class Stack {
         if (held == LIMIT) {
             // the oldest frame held gives its slot up; the history keeps it to put back
             StackFrame evicted = frames[slot];
+            releases(evicted);
             frame = recording ? backStepper().addCallRestore(toAddress, evicted) : evicted;
             if (frame == null) frame = new StackFrame();
             frames[slot] = frame;
@@ -117,6 +131,7 @@ public class Stack {
             if (recording) backStepper().addCallRestore(toAddress, null);
         }
         frame.capture(pc, callSite, toAddress, returnAddress, kind);
+        holds(frame);
         depth++;
         returnWatch = returnAddress;
     }
@@ -129,8 +144,15 @@ public class Stack {
         if (depth == 0) return;
         int pops = 1;
         if (held > 0) {
-            if (frames[(depth - 1) & MASK].getKind() != StackFrame.KIND_CALL) return;
-            for (int i = depth - 1; i >= depth - held; i--) {
+            StackFrame innermost = frames[(depth - 1) & MASK];
+            if (innermost.getKind() != StackFrame.KIND_CALL) return;
+            // nearly every return is the innermost frame's; an outer frame is looked for only when
+            // one returns there, so a return that matches none costs no walk through all of them
+            if (innermost.getReturnAddress() == target || callsReturningTo(target) == 0) {
+                pop(1);
+                return;
+            }
+            for (int i = depth - 2; i >= depth - held; i--) {
                 StackFrame frame = frames[i & MASK];
                 if (frame.getKind() != StackFrame.KIND_CALL) break;
                 if (frame.getReturnAddress() == target) {
@@ -144,6 +166,7 @@ public class Stack {
 
     /** {@code eret}: pops every frame down to the newest handler frame, or none when there is none. */
     public static void returnFromHandler() {
+        if (handlersHeld == 0) return;
         for (int i = depth - 1; i >= depth - held; i--) {
             if (frames[i & MASK].getKind() != StackFrame.KIND_CALL) {
                 pop(depth - i);
@@ -181,6 +204,7 @@ public class Stack {
             return;
         }
         held--;
+        releases(frames[depth & MASK]);
         if (recording) {
             int slot = depth & MASK;
             // the history keeps the popped frame to put back, and hands over one it no longer needs
@@ -191,7 +215,10 @@ public class Stack {
     /** Undoes a call that took a free slot: the frame comes off again, its object kept for the next call. */
     public static void undoCall() {
         if (depth > 0) depth--;
-        if (held > 0) held--;
+        if (held > 0) {
+            held--;
+            releases(frames[depth & MASK]);
+        }
         watchTop();
     }
 
@@ -205,7 +232,9 @@ public class Stack {
         depth--;
         int slot = depth & MASK;
         StackFrame spare = frames[slot];
+        releases(spare);
         frames[slot] = evicted;
+        holds(evicted);
         watchTop();
         return spare;
     }
@@ -227,6 +256,7 @@ public class Stack {
         if (frames == null || slot >= frames.length) grow();
         StackFrame spare = frames[slot];
         frames[slot] = frame;
+        holds(frame);
         depth++;
         held++;
         watchTop();
@@ -239,6 +269,82 @@ public class Stack {
 
     private static BackStepper backStepper() {
         return Globals.program.getBackStepper();
+    }
+
+    /** {@code frame} is held now: it is counted. */
+    private static void holds(StackFrame frame) {
+        if (frame.getKind() == StackFrame.KIND_CALL) count(frame.getReturnAddress(), 1);
+        else handlersHeld++;
+    }
+
+    /** {@code frame} is no longer held: it is no longer counted. */
+    private static void releases(StackFrame frame) {
+        if (frame.getKind() == StackFrame.KIND_CALL) count(frame.getReturnAddress(), -1);
+        else handlersHeld--;
+    }
+
+    private static int returnSlot(int[] keys, int address) {
+        int hash = address * 0x9E3779B9;
+        return (hash ^ (hash >>> 16)) & (keys.length - 1);
+    }
+
+    /** How many held call frames return to {@code address}. */
+    private static int callsReturningTo(int address) {
+        if (returnKeys == null) return 0;
+        int mask = returnKeys.length - 1;
+        for (int at = returnSlot(returnKeys, address); ; at = (at + 1) & mask) {
+            int key = returnKeys[at];
+            if (key == address) return returnCounts[at];
+            if (key == NO_KEY) return 0;
+        }
+    }
+
+    /** Adds {@code delta} to the count of held call frames that return to {@code address}. */
+    private static void count(int address, int delta) {
+        if (returnKeys == null) {
+            returnKeys = emptyKeys(64);
+            returnCounts = new int[64];
+        }
+        int mask = returnKeys.length - 1;
+        for (int at = returnSlot(returnKeys, address); ; at = (at + 1) & mask) {
+            int key = returnKeys[at];
+            if (key == address) {
+                returnCounts[at] += delta;
+                return;
+            }
+            if (key == NO_KEY) {
+                if ((returnKeysUsed + 1) * 2 > returnKeys.length) {
+                    growReturnCounts();
+                    count(address, delta);
+                    return;
+                }
+                returnKeys[at] = address;
+                returnCounts[at] = delta;
+                returnKeysUsed++;
+                return;
+            }
+        }
+    }
+
+    private static int[] emptyKeys(int size) {
+        int[] keys = new int[size];
+        Arrays.fill(keys, NO_KEY);
+        return keys;
+    }
+
+    private static void growReturnCounts() {
+        int[] keys = returnKeys;
+        int[] counts = returnCounts;
+        returnKeys = emptyKeys(keys.length * 2);
+        returnCounts = new int[keys.length * 2];
+        int mask = returnKeys.length - 1;
+        for (int i = 0; i < keys.length; i++) {
+            if (keys[i] == NO_KEY) continue;
+            int at = returnSlot(returnKeys, keys[i]);
+            while (returnKeys[at] != NO_KEY) at = (at + 1) & mask;
+            returnKeys[at] = keys[i];
+            returnCounts[at] = counts[i];
+        }
     }
 
     // Until the limit is first reached the depth is the frames held, all in slots below the array's
@@ -254,6 +360,16 @@ public class Stack {
         depth = 0;
         held = 0;
         returnedAt = 0;
+        handlersHeld = 0;
+        // a program that called from many places leaves nothing large behind it
+        if (returnKeys != null && returnKeys.length > 1024) {
+            returnKeys = null;
+            returnCounts = null;
+        } else if (returnKeys != null) {
+            Arrays.fill(returnKeys, NO_KEY);
+            Arrays.fill(returnCounts, 0);
+        }
+        returnKeysUsed = 0;
         watchTop();
     }
 
